@@ -1,0 +1,197 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  DONE
+  ARCHIVED
+}
+
+enum NotifType {
+  PROJECT_UPDATED
+  COMMENT_ADDED
+}
+
+enum ProjectDepartment {
+  HAEMATOLOGY
+  HEMOSTASIS
+  URINALYSIS
+  FLOW_CYTOMETRY
+  LIFE_SCIENCE
+  POINT_OF_CARE
+  CARESPHERE_ACADEMY
+  SOFTWARE
+  IMMUNOLOGY
+  CLINICAL_CHEMISTRY
+  OTHER
+}
+
+enum ReactionType {
+  LIKE
+  HEART
+  CLAP
+  WOW
+  CHECK
+}
+
+enum CommentKind {
+  COMMENT
+  SYSTEM
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  username           String   @unique
+  displayName        String
+  passwordHash       String
+  role               Role     @default(USER)
+  mustChangePassword Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  projectsOwned    Project[]         @relation("OwnerProjects")
+  managedProjects  Project[]         @relation("ManagedProjects")
+  timeEntries      TimeEntry[]
+  comments         Comment[]
+  notifications    Notification[]
+  assignments      Assignment[]
+  commentReactions CommentReaction[]
+}
+
+model Project {
+  id          String            @id @default(cuid())
+  name        String
+  colorKey    String            @default("slate")
+  status      ProjectStatus     @default(PLANNED)
+  department  ProjectDepartment @default(OTHER)
+  description String?
+  notes       String?
+
+  ownerId String?
+  owner   User?   @relation("OwnerProjects", fields: [ownerId], references: [id])
+
+  projectManagerId String?
+  projectManager   User?   @relation("ManagedProjects", fields: [projectManagerId], references: [id])
+
+  requesterName     String?
+  contactPersonName String?
+
+  startDate DateTime?
+  dueDate   DateTime?
+
+  entries     TimeEntry[]
+  comments    Comment[]
+  assignments Assignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([department])
+  @@index([projectManagerId])
+}
+
+model TimeEntry {
+  id          String    @id @default(cuid())
+  userId      String
+  projectId   String
+  description String?
+  startedAt   DateTime
+  stoppedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@index([userId, stoppedAt])
+}
+
+model Comment {
+  id              String      @id @default(cuid())
+  projectId       String
+  authorId        String
+  body            String
+  kind            CommentKind @default(COMMENT)
+  meta            Json?
+  progressPercent Int?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  project     Project             @relation(fields: [projectId], references: [id])
+  author      User                @relation(fields: [authorId], references: [id])
+  attachments CommentAttachment[]
+  reactions   CommentReaction[]
+
+  @@index([projectId, createdAt])
+}
+
+model CommentAttachment {
+  id        String   @id @default(cuid())
+  commentId String
+  type      String
+  url       String
+  label     String?
+  createdAt DateTime @default(now())
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@index([commentId])
+}
+
+model CommentReaction {
+  id        String       @id @default(cuid())
+  commentId String
+  userId    String
+  type      ReactionType
+  createdAt DateTime     @default(now())
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([commentId, userId, type])
+  @@index([commentId])
+  @@index([userId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      NotifType
+  payload   Json
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+}
+
+model Assignment {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  startDate DateTime
+  endDate   DateTime
+
+  user    User    @relation(fields: [userId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, startDate])
+  @@index([projectId, startDate])
+}
