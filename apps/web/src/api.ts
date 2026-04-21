@@ -35,17 +35,8 @@ const DEMO_USERS: Record<string, Me> = {
   },
 };
 
-function shouldUseDemoAuth() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const { hostname } = window.location;
-  return hostname !== "localhost" && hostname !== "127.0.0.1";
-}
-
 function storeDemoSession(me: Me | null) {
-  if (!shouldUseDemoAuth() || typeof window === "undefined") {
+  if (typeof window === "undefined") {
     return;
   }
 
@@ -58,7 +49,7 @@ function storeDemoSession(me: Me | null) {
 }
 
 export function getStoredDemoSession(): Me | null {
-  if (!shouldUseDemoAuth() || typeof window === "undefined") {
+  if (typeof window === "undefined") {
     return null;
   }
 
@@ -76,6 +67,10 @@ export function getStoredDemoSession(): Me | null {
     window.localStorage.removeItem(DEMO_AUTH_STORAGE_KEY);
     return null;
   }
+}
+
+export function clearStoredDemoSession() {
+  storeDemoSession(null);
 }
 
 export type UserRow = {
@@ -165,34 +160,18 @@ export async function toggleCommentReaction(
 }
 
 export async function login(username: string, password: string): Promise<Me> {
-  if (shouldUseDemoAuth()) {
-    // Temporary frontend-only demo auth for deployed previews. Restore the
-    // real API request below when backend auth is available again.
-    const normalizedUsername = username.trim().toLowerCase();
-    const demoUser = DEMO_USERS[normalizedUsername];
+  // Temporary frontend-only demo auth. Replace this with the real backend
+  // login request later when the deployed demo should use live auth again.
+  const normalizedUsername = username.trim().toLowerCase();
+  const demoUser = DEMO_USERS[normalizedUsername];
 
-    if (!demoUser || password !== DEMO_LOGIN_PASSWORD) {
-      throw new Error("Invalid username or password");
-    }
-
-    const session = { ...demoUser };
-    storeDemoSession(session);
-    return session;
+  if (!demoUser || password !== DEMO_LOGIN_PASSWORD) {
+    throw new Error("Invalid username or password");
   }
 
-  const res = await fetch(`${API_BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ username, password }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-
-  return res.json();
+  const session = { ...demoUser };
+  storeDemoSession(session);
+  return session;
 }
 
 export type ProjectStatus =
