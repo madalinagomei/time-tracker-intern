@@ -243,10 +243,381 @@ export type Project = {
   updatedAt: string;
 };
 
+const DEMO_DATA_STORAGE_KEY = "timeline-demo-data-v1";
+
+type DemoState = {
+  users: UserRow[];
+  projects: Project[];
+  assignments: AssignmentRow[];
+};
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function startOfDayLocal(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function addDaysLocal(date: Date, amount: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return startOfDayLocal(next);
+}
+
+function isWeekendLocal(date: Date) {
+  return date.getDay() === 0 || date.getDay() === 6;
+}
+
+function addWorkingDaysInclusiveLocal(start: Date, workingDays: number) {
+  const cursor = startOfDayLocal(start);
+  let counted = isWeekendLocal(cursor) ? 0 : 1;
+
+  while (counted < workingDays) {
+    cursor.setDate(cursor.getDate() + 1);
+    if (!isWeekendLocal(cursor)) {
+      counted += 1;
+    }
+  }
+
+  cursor.setDate(cursor.getDate() + 1);
+  return startOfDayLocal(cursor);
+}
+
+function countWorkingDaysLocal(start: Date, endExclusive: Date) {
+  const cursor = startOfDayLocal(start);
+  const end = startOfDayLocal(endExclusive);
+  let count = 0;
+
+  while (cursor < end) {
+    if (!isWeekendLocal(cursor)) {
+      count += 1;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return count;
+}
+
+function createDemoId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getDemoProjectPerson(
+  userId: string | null | undefined,
+  state: DemoState,
+): ProjectPerson | null {
+  if (!userId) {
+    return null;
+  }
+
+  const user = state.users.find((item) => item.id === userId);
+
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+  };
+}
+
+function getDemoAssignmentUser(
+  userId: string,
+  state: DemoState,
+): ProjectAssignmentUser {
+  const user = state.users.find((item) => item.id === userId);
+
+  return {
+    id: user?.id ?? userId,
+    username: user?.username ?? userId,
+    displayName: user?.displayName ?? userId,
+  };
+}
+
+function enrichProject(project: Project, state: DemoState): Project {
+  return {
+    ...project,
+    owner: getDemoProjectPerson(project.ownerId, state),
+    projectManager: getDemoProjectPerson(project.projectManagerId, state),
+    assignments: state.assignments
+      .filter((assignment) => assignment.projectId === project.id)
+      .sort(
+        (left, right) =>
+          new Date(left.startDate).getTime() - new Date(right.startDate).getTime(),
+      )
+      .map((assignment) => ({
+        ...assignment,
+        user: getDemoAssignmentUser(assignment.userId, state),
+      })),
+  };
+}
+
+function buildInitialDemoState(): DemoState {
+  const users: UserRow[] = Object.values(DEMO_USERS).map((user) => ({
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    role: user.role,
+  }));
+
+  const today = startOfDayLocal(new Date());
+  const nowIso = today.toISOString();
+
+  const projects: Project[] = [
+    {
+      id: "project-hemostasis-rollout",
+      name: "Hemostasis rollout",
+      colorKey: "hemostasis",
+      ownerId: "pm1",
+      status: "ACTIVE",
+      department: "HEMOSTASIS",
+      description: "Q2 product launch planning and training rollout.",
+      notes: "Align launch, training, and support materials.",
+      projectManagerId: "pm1",
+      requesterName: "Clinical Product Team",
+      contactPersonName: "Andrea Schaal",
+      startDate: addDaysLocal(today, -12).toISOString(),
+      dueDate: addDaysLocal(today, 28).toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-urinalysis-campaign",
+      name: "MC-761 launch",
+      colorKey: "urinalysis",
+      ownerId: "emilian",
+      status: "ACTIVE",
+      department: "URINALYSIS",
+      description: "Launch assets and visual pack for MC-761.",
+      notes: "Keep campaign materials aligned with booth graphics.",
+      projectManagerId: "pm1",
+      requesterName: "Marketing",
+      contactPersonName: "Emilian",
+      startDate: addDaysLocal(today, -5).toISOString(),
+      dueDate: addDaysLocal(today, 24).toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-flow-cytometry-summit",
+      name: "Flow Cytometry summit",
+      colorKey: "flow-cytometry",
+      ownerId: "user1",
+      status: "PLANNED",
+      department: "FLOW_CYTOMETRY",
+      description: "Summit support materials and event follow-ups.",
+      notes: "Prep deck, promo visuals, and post-event mailer.",
+      projectManagerId: "pm1",
+      requesterName: "Events Team",
+      contactPersonName: "User 1",
+      startDate: addDaysLocal(today, 2).toISOString(),
+      dueDate: addDaysLocal(today, 40).toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-software-refresh",
+      name: "Software refresh",
+      colorKey: "software",
+      ownerId: "emilian",
+      status: "ACTIVE",
+      department: "SOFTWARE",
+      description: "Refresh timeline demo assets and product visuals.",
+      notes: "Coordinate with PM before publishing new media.",
+      projectManagerId: "emilian",
+      requesterName: "Product",
+      contactPersonName: "Emilian",
+      startDate: addDaysLocal(today, -8).toISOString(),
+      dueDate: addDaysLocal(today, 21).toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-clinical-chemistry-kit",
+      name: "Clinical chemistry kit",
+      colorKey: "clinical-chemistry",
+      ownerId: "pm1",
+      status: "ON_HOLD",
+      department: "CLINICAL_CHEMISTRY",
+      description: "Packaging refresh and sample kit follow-up.",
+      notes: "Waiting on revised product naming.",
+      projectManagerId: "pm1",
+      requesterName: "Sales",
+      contactPersonName: "PM 1",
+      startDate: addDaysLocal(today, 7).toISOString(),
+      dueDate: addDaysLocal(today, 48).toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-holiday",
+      name: "Holiday",
+      colorKey: "leave-vacation",
+      ownerId: null,
+      status: "PLANNED",
+      department: "OTHER",
+      description: null,
+      notes: null,
+      projectManagerId: null,
+      requesterName: null,
+      contactPersonName: null,
+      startDate: null,
+      dueDate: null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-sick",
+      name: "Sick",
+      colorKey: "leave-sick",
+      ownerId: null,
+      status: "PLANNED",
+      department: "OTHER",
+      description: null,
+      notes: null,
+      projectManagerId: null,
+      requesterName: null,
+      contactPersonName: null,
+      startDate: null,
+      dueDate: null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-training",
+      name: "Training",
+      colorKey: "leave-training",
+      ownerId: null,
+      status: "PLANNED",
+      department: "OTHER",
+      description: null,
+      notes: null,
+      projectManagerId: null,
+      requesterName: null,
+      contactPersonName: null,
+      startDate: null,
+      dueDate: null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: "project-ooo",
+      name: "Out of Office",
+      colorKey: "leave-ooo",
+      ownerId: null,
+      status: "PLANNED",
+      department: "OTHER",
+      description: null,
+      notes: null,
+      projectManagerId: null,
+      requesterName: null,
+      contactPersonName: null,
+      startDate: null,
+      dueDate: null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+  ];
+
+  const assignmentSeeds = [
+    { id: "assignment-1", userId: "emilian", projectId: "project-hemostasis-rollout", offset: -6, lengthDays: 7 },
+    { id: "assignment-2", userId: "emilian", projectId: "project-software-refresh", offset: 5, lengthDays: 6 },
+    { id: "assignment-3", userId: "emilian", projectId: "project-holiday", offset: 18, lengthDays: 5 },
+    { id: "assignment-4", userId: "pm1", projectId: "project-urinalysis-campaign", offset: -3, lengthDays: 8 },
+    { id: "assignment-5", userId: "pm1", projectId: "project-flow-cytometry-summit", offset: 12, lengthDays: 6 },
+    { id: "assignment-6", userId: "pm1", projectId: "project-training", offset: 3, lengthDays: 2 },
+    { id: "assignment-7", userId: "user1", projectId: "project-software-refresh", offset: -9, lengthDays: 5 },
+    { id: "assignment-8", userId: "user1", projectId: "project-clinical-chemistry-kit", offset: 9, lengthDays: 9 },
+    { id: "assignment-9", userId: "user1", projectId: "project-sick", offset: 1, lengthDays: 2 },
+    { id: "assignment-10", userId: "pm1", projectId: "project-hemostasis-rollout", offset: 22, lengthDays: 4 },
+    { id: "assignment-11", userId: "emilian", projectId: "project-ooo", offset: 29, lengthDays: 3 },
+    { id: "assignment-12", userId: "user1", projectId: "project-urinalysis-campaign", offset: 20, lengthDays: 5 },
+  ];
+
+  const assignments: AssignmentRow[] = assignmentSeeds.map((seed) => {
+    const startDate = addDaysLocal(today, seed.offset);
+    const endDate = addWorkingDaysInclusiveLocal(startDate, seed.lengthDays);
+
+    return {
+      id: seed.id,
+      userId: seed.userId,
+      projectId: seed.projectId,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  });
+
+  return {
+    users,
+    projects,
+    assignments,
+  };
+}
+
+function readDemoState(): DemoState {
+  const fallback = buildInitialDemoState();
+
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+
+  const raw = window.localStorage.getItem(DEMO_DATA_STORAGE_KEY);
+
+  if (!raw) {
+    window.localStorage.setItem(
+      DEMO_DATA_STORAGE_KEY,
+      JSON.stringify(fallback),
+    );
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<DemoState>;
+
+    if (
+      !Array.isArray(parsed.users) ||
+      !Array.isArray(parsed.projects) ||
+      !Array.isArray(parsed.assignments)
+    ) {
+      throw new Error("Invalid demo data");
+    }
+
+    return {
+      users: parsed.users as UserRow[],
+      projects: parsed.projects as Project[],
+      assignments: parsed.assignments as AssignmentRow[],
+    };
+  } catch {
+    window.localStorage.setItem(
+      DEMO_DATA_STORAGE_KEY,
+      JSON.stringify(fallback),
+    );
+    return fallback;
+  }
+}
+
+function writeDemoState(state: DemoState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(DEMO_DATA_STORAGE_KEY, JSON.stringify(state));
+}
+
+function getDemoProjects(state: DemoState) {
+  return state.projects.map((project) => enrichProject(project, state));
+}
+
 export async function getProjects(): Promise<Project[]> {
-  const res = await fetch(`${API_BASE}/projects`, { credentials: "include" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const state = readDemoState();
+  return clone(getDemoProjects(state));
 }
 
 export async function createProject(
@@ -265,40 +636,34 @@ export async function createProject(
     dueDate?: string | null;
   },
 ): Promise<Project> {
-  const body: any = {
+  const state = readDemoState();
+  const nowIso = new Date().toISOString();
+  const project: Project = {
+    id: createDemoId("project"),
     name,
-    colorKey,
-    ...metadata,
+    colorKey: colorKey ?? "software",
+    ownerId: ownerId ?? null,
+    status: metadata?.status ?? "PLANNED",
+    department: metadata?.department ?? "OTHER",
+    description: metadata?.description ?? null,
+    notes: metadata?.notes ?? null,
+    projectManagerId: metadata?.projectManagerId ?? null,
+    requesterName: metadata?.requesterName ?? null,
+    contactPersonName: metadata?.contactPersonName ?? null,
+    startDate: metadata?.startDate ?? null,
+    dueDate: metadata?.dueDate ?? null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
   };
 
-  if (ownerId) body.ownerId = ownerId;
+  state.projects.unshift(project);
+  writeDemoState(state);
 
-  const res = await fetch(`${API_BASE}/projects`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-
-  return res.json();
+  return clone(enrichProject(project, state));
 }
 
 export async function getUsers(): Promise<UserRow[]> {
-  const res = await fetch(`${API_BASE}/users`, {
-    credentials: "include",
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-
-  return res.json();
+  return clone(readDemoState().users);
 }
 
 export async function updateProjectComment(
@@ -348,14 +713,31 @@ export async function getAssignments(
   from?: string,
   to?: string,
 ): Promise<AssignmentRow[]> {
-  const params = new URLSearchParams();
-  if (from) params.set("from", from);
-  if (to) params.set("to", to);
+  const state = readDemoState();
+  const fromDate = from ? new Date(from) : null;
+  const toDate = to ? new Date(to) : null;
 
-  const url = `${API_BASE}/assignments${params.toString() ? `?${params}` : ""}`;
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const assignments = state.assignments
+    .filter((assignment) => {
+      const startDate = new Date(assignment.startDate);
+      const endDate = new Date(assignment.endDate);
+
+      if (fromDate && endDate <= fromDate) {
+        return false;
+      }
+
+      if (toDate && startDate >= toDate) {
+        return false;
+      }
+
+      return true;
+    })
+    .sort(
+      (left, right) =>
+        new Date(left.startDate).getTime() - new Date(right.startDate).getTime(),
+    );
+
+  return clone(assignments);
 }
 
 export async function createAssignment(
@@ -364,19 +746,26 @@ export async function createAssignment(
   startDate: string,
   lengthDays = 1,
 ): Promise<AssignmentRow> {
-  const res = await fetch(`${API_BASE}/assignments`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ userId, projectId, startDate, lengthDays }),
-  });
+  const state = readDemoState();
+  const createdAt = new Date().toISOString();
+  const start = startOfDayLocal(new Date(startDate));
+  const assignment: AssignmentRow = {
+    id: createDemoId("assignment"),
+    userId,
+    projectId,
+    startDate: start.toISOString(),
+    endDate: addWorkingDaysInclusiveLocal(
+      start,
+      Math.max(1, lengthDays),
+    ).toISOString(),
+    createdAt,
+    updatedAt: createdAt,
+  };
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
+  state.assignments.unshift(assignment);
+  writeDemoState(state);
 
-  return res.json();
+  return clone(assignment);
 }
 
 export async function updateAssignment(
@@ -386,27 +775,45 @@ export async function updateAssignment(
     lengthDays?: number;
   },
 ): Promise<AssignmentRow> {
-  const res = await fetch(`${API_BASE}/assignments/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(patch),
-  });
+  const state = readDemoState();
+  const existing = state.assignments.find((assignment) => assignment.id === id);
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+  if (!existing) {
+    throw new Error("Assignment not found");
   }
 
-  return res.json();
+  const nextStart = patch.startDate
+    ? startOfDayLocal(new Date(patch.startDate))
+    : startOfDayLocal(new Date(existing.startDate));
+  const nextLength =
+    patch.lengthDays ??
+    Math.max(
+      1,
+      countWorkingDaysLocal(
+        new Date(existing.startDate),
+        new Date(existing.endDate),
+      ),
+    );
+
+  const updated: AssignmentRow = {
+    ...existing,
+    startDate: nextStart.toISOString(),
+    endDate: addWorkingDaysInclusiveLocal(nextStart, nextLength).toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  state.assignments = state.assignments.map((assignment) =>
+    assignment.id === id ? updated : assignment,
+  );
+  writeDemoState(state);
+
+  return clone(updated);
 }
 
 export async function deleteAssignment(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/assignments/${id}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
-  if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+  const state = readDemoState();
+  state.assignments = state.assignments.filter((assignment) => assignment.id !== id);
+  writeDemoState(state);
 }
 
 export async function updateProject(
@@ -429,19 +836,25 @@ export async function updateProject(
     dueDate?: string | null;
   },
 ): Promise<Project> {
-  const res = await fetch(`${API_BASE}/projects/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(patch),
-  });
+  const state = readDemoState();
+  const existing = state.projects.find((project) => project.id === id);
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+  if (!existing) {
+    throw new Error("Project not found");
   }
 
-  return res.json();
+  const updated: Project = {
+    ...existing,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+
+  state.projects = state.projects.map((project) =>
+    project.id === id ? updated : project,
+  );
+  writeDemoState(state);
+
+  return clone(enrichProject(updated, state));
 }
 
 export async function getProjectComments(
@@ -487,13 +900,10 @@ export async function createProjectComment(
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${id}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
+  const state = readDemoState();
+  state.projects = state.projects.filter((project) => project.id !== id);
+  state.assignments = state.assignments.filter(
+    (assignment) => assignment.projectId !== id,
+  );
+  writeDemoState(state);
 }
