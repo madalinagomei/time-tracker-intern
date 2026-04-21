@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { login } from "../api";
+import { DEMO_LOGIN_PASSWORD, login } from "../api";
 import type { Me } from "../api";
 
 export function LoginPage({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
   const [username, setUsername] = useState("emilian");
-  const [password, setPassword] = useState("ChangeMe123!");
+  const [password, setPassword] = useState(DEMO_LOGIN_PASSWORD);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 

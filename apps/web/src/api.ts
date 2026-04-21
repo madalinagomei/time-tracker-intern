@@ -1,4 +1,7 @@
 const API_BASE = "http://localhost:4000";
+const DEMO_AUTH_STORAGE_KEY = "timeline-demo-session";
+
+export const DEMO_LOGIN_PASSWORD = "demo123";
 
 export type Me = {
   id: string;
@@ -7,6 +10,73 @@ export type Me = {
   role: "USER" | "ADMIN";
   mustChangePassword: boolean;
 };
+
+const DEMO_USERS: Record<string, Me> = {
+  emilian: {
+    id: "emilian",
+    username: "emilian",
+    displayName: "Emilian",
+    role: "ADMIN",
+    mustChangePassword: false,
+  },
+  pm1: {
+    id: "pm1",
+    username: "pm1",
+    displayName: "PM 1",
+    role: "ADMIN",
+    mustChangePassword: false,
+  },
+  user1: {
+    id: "user1",
+    username: "user1",
+    displayName: "User 1",
+    role: "USER",
+    mustChangePassword: false,
+  },
+};
+
+function shouldUseDemoAuth() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const { hostname } = window.location;
+  return hostname !== "localhost" && hostname !== "127.0.0.1";
+}
+
+function storeDemoSession(me: Me | null) {
+  if (!shouldUseDemoAuth() || typeof window === "undefined") {
+    return;
+  }
+
+  if (!me) {
+    window.localStorage.removeItem(DEMO_AUTH_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(DEMO_AUTH_STORAGE_KEY, JSON.stringify(me));
+}
+
+export function getStoredDemoSession(): Me | null {
+  if (!shouldUseDemoAuth() || typeof window === "undefined") {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(DEMO_AUTH_STORAGE_KEY);
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<Me>;
+    const demoUser = parsed.username ? DEMO_USERS[parsed.username] : null;
+    return demoUser ? { ...demoUser } : null;
+  } catch {
+    window.localStorage.removeItem(DEMO_AUTH_STORAGE_KEY);
+    return null;
+  }
+}
 
 export type UserRow = {
   id: string;
@@ -95,6 +165,21 @@ export async function toggleCommentReaction(
 }
 
 export async function login(username: string, password: string): Promise<Me> {
+  if (shouldUseDemoAuth()) {
+    // Temporary frontend-only demo auth for deployed previews. Restore the
+    // real API request below when backend auth is available again.
+    const normalizedUsername = username.trim().toLowerCase();
+    const demoUser = DEMO_USERS[normalizedUsername];
+
+    if (!demoUser || password !== DEMO_LOGIN_PASSWORD) {
+      throw new Error("Invalid username or password");
+    }
+
+    const session = { ...demoUser };
+    storeDemoSession(session);
+    return session;
+  }
+
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
