@@ -18,6 +18,7 @@ export function TopBar({
   onNewProject,
   onToggleProjects,
   projectsOpen,
+  onLogout,
 }: {
   me: Me;
   theme: Theme;
@@ -25,6 +26,7 @@ export function TopBar({
   onNewProject: () => void;
   onToggleProjects: () => void;
   projectsOpen: boolean;
+  onLogout: () => void;
 }) {
   const avatarTone = getAvatarTone(me.id);
 
@@ -93,6 +95,14 @@ export function TopBar({
                 {me.role}
               </div>
             </div>
+
+            <button
+              type="button"
+              onClick={onLogout}
+              className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800 dark:hover:bg-zinc-800"
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </div>

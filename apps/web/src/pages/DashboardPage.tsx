@@ -782,7 +782,13 @@ function AssignmentComposerPopover({
   );
 }
 
-export function DashboardPage({ me }: { me: Me }) {
+export function DashboardPage({
+  me,
+  onLogout,
+}: {
+  me: Me;
+  onLogout: () => void;
+}) {
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectRailOpen, setProjectRailOpen] = useState(false);
@@ -1692,6 +1698,7 @@ export function DashboardPage({ me }: { me: Me }) {
         onNewProject={() => setShowNewProject(true)}
         onToggleProjects={() => setProjectRailOpen((previous) => !previous)}
         projectsOpen={projectRailOpen}
+        onLogout={onLogout}
       />
 
       <div className="flex-1 overflow-hidden px-4 py-4 lg:px-5">
