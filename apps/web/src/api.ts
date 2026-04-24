@@ -705,6 +705,7 @@ export type AssignmentRow = {
   projectId: string;
   startDate: string;
   endDate: string;
+  laneIndex?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -745,6 +746,9 @@ export async function createAssignment(
   projectId: string,
   startDate: string,
   lengthDays = 1,
+  options?: {
+    laneIndex?: number;
+  },
 ): Promise<AssignmentRow> {
   const state = readDemoState();
   const createdAt = new Date().toISOString();
@@ -758,6 +762,7 @@ export async function createAssignment(
       start,
       Math.max(1, lengthDays),
     ).toISOString(),
+    laneIndex: options?.laneIndex,
     createdAt,
     updatedAt: createdAt,
   };
@@ -773,6 +778,8 @@ export async function updateAssignment(
   patch: {
     startDate?: string;
     lengthDays?: number;
+    userId?: string;
+    laneIndex?: number;
   },
 ): Promise<AssignmentRow> {
   const state = readDemoState();
@@ -794,11 +801,17 @@ export async function updateAssignment(
         new Date(existing.endDate),
       ),
     );
+  const nextUserId = patch.userId ?? existing.userId;
+  const nextLaneIndex = Object.prototype.hasOwnProperty.call(patch, "laneIndex")
+    ? patch.laneIndex
+    : existing.laneIndex;
 
   const updated: AssignmentRow = {
     ...existing,
+    userId: nextUserId,
     startDate: nextStart.toISOString(),
     endDate: addWorkingDaysInclusiveLocal(nextStart, nextLength).toISOString(),
+    laneIndex: nextLaneIndex,
     updatedAt: new Date().toISOString(),
   };
 

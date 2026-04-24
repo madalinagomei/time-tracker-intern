@@ -26,14 +26,15 @@ import type {
 } from "../api";
 import {
   COLOR_OPTIONS,
-  DAY_WIDTH,
   DEPARTMENT_COLOR_OPTIONS,
   LEFT_COLUMN_WIDTH,
   LEAVE_COLOR_OPTIONS,
   ROW_OVERSCAN,
+  TIMELINE_DENSITY_OPTIONS,
   TIMELINE_EDGE_BUFFER_DAYS,
   TIMELINE_SHIFT_DAYS,
   TIMELINE_WINDOW_DAYS,
+  TIMELINE_ZOOM_OPTIONS,
   addDays,
   addWorkingDaysInclusive,
   buildStableLaneMap,
@@ -45,6 +46,7 @@ import {
   getDefaultLabelForLeaveType,
   getLeaveTypeFromColorKey,
   getProjectDepartmentFromColorKey,
+  getTimelineDayWidth,
   getWorkingRangeFromDrag,
   isHoliday,
   isLeaveColorKey,
@@ -54,9 +56,11 @@ import {
   normalizeColorKey,
   snapToWorkingDay,
   startOfMonday,
+  type TimelineDensityMode,
   type LeaveType,
   type TimelineEntryType,
   type TimelineAssignmentLike,
+  type TimelineZoomMode,
 } from "../planning";
 import { applyTheme, getInitialTheme, type Theme } from "../theme";
 
@@ -72,6 +76,8 @@ import { UserRowLine } from "../components/UserRowLine";
 
 const DRAFT_PROJECT_ID = "__draft__project";
 const DRAFT_ASSIGNMENT_ID = "__draft__assignment";
+const DUPLICATE_PREVIEW_ASSIGNMENT_ID = "__duplicate__assignment";
+const DEFAULT_NEW_PROJECT_COLOR_KEY = "haematology";
 
 const DEMO_TEAMS: TeamGroup[] = [
   {
@@ -129,6 +135,8 @@ type AssignmentPreview = {
   assignmentId: string;
   startDate: string;
   endDate: string;
+  userId?: string;
+  laneIndex?: number;
 };
 
 type DraftAssignment = TimelineAssignmentLike & {
@@ -143,6 +151,21 @@ type PendingComposer = {
   anchorRect: DOMRect;
 };
 
+type ToastState = {
+  id: number;
+  message: string;
+};
+
+type ProjectComposerOption =
+  | {
+      kind: "project";
+      project: Project;
+    }
+  | {
+      kind: "create";
+      name: string;
+    };
+
 type InteractionState =
   | {
       mode: "create";
@@ -155,9 +178,14 @@ type InteractionState =
   | {
       mode: "move";
       assignmentId: string;
+      duplicate: boolean;
+      horizontalLock: boolean;
       originClientX: number;
+      originClientY: number;
       originalStartDate: string;
       originalEndDate: string;
+      originalUserId: string;
+      originalLaneIndex: number;
       projectId: string;
     }
   | {
@@ -287,6 +315,33 @@ function findLastVisibleRow(
   }
 
   return answer;
+}
+
+function findRowAtOffset<T extends { top: number; height: number }>(
+  rows: T[],
+  offsetY: number,
+) {
+  let low = 0;
+  let high = rows.length - 1;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const row = rows[mid];
+
+    if (offsetY < row.top) {
+      high = mid - 1;
+      continue;
+    }
+
+    if (offsetY >= row.top + row.height) {
+      low = mid + 1;
+      continue;
+    }
+
+    return row;
+  }
+
+  return null;
 }
 
 function NewProjectModal({
@@ -446,44 +501,143 @@ function NewProjectModal({
 function AssignmentComposerPopover({
   pending,
   projects,
+  recentProjects,
   onChooseProject,
   onCreateProject,
   onClose,
 }: {
   pending: PendingComposer;
   projects: Project[];
+  recentProjects: Project[];
   onChooseProject: (projectId: string) => Promise<void>;
   onCreateProject: (name: string, colorKey: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [entryType, setEntryType] = useState<TimelineEntryType>("PROJECT");
   const [search, setSearch] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newColorKey, setNewColorKey] = useState("haematology");
+  const [leaveName, setLeaveName] = useState("");
   const [leaveType, setLeaveType] = useState<LeaveType>("HOLIDAY");
+  const [projectColorKey, setProjectColorKey] = useState(
+    DEFAULT_NEW_PROJECT_COLOR_KEY,
+  );
+  const [showProjectColorPicker, setShowProjectColorPicker] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const panelLayout = getFloatingPanelLayout(pending.anchorRect, 440);
+  const panelLayout = getFloatingPanelLayout(
+    pending.anchorRect,
+    entryType === "PROJECT" ? 380 : 440,
+  );
   const leaveColorKey = getColorKeyForLeaveType(leaveType);
   const leaveLabel = getDefaultLabelForLeaveType(leaveType);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const normalizedSearch = search.trim().toLowerCase();
+  const projectColorOption = getColorOption(projectColorKey);
 
-  const filteredProjects = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  const availableProjects = useMemo(
+    () =>
+      projects
+        .filter((project) => !isLeaveColorKey(project.colorKey))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [projects],
+  );
 
-    return projects
-      .filter((project) => !isLeaveColorKey(project.colorKey))
-      .filter((project) =>
-        !query ? true : project.name.toLowerCase().includes(query),
-      )
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [projects, search]);
+  const exactProjectMatch = useMemo(
+    () =>
+      normalizedSearch
+        ? availableProjects.find(
+            (project) =>
+              project.name.trim().toLowerCase() === normalizedSearch,
+          ) ?? null
+        : null,
+    [availableProjects, normalizedSearch],
+  );
+
+  const filteredComposerProjects = useMemo(
+    () =>
+      normalizedSearch
+        ? availableProjects
+            .filter((project) =>
+              project.name.toLowerCase().includes(normalizedSearch),
+            )
+            .slice(0, 7)
+        : [],
+    [availableProjects, normalizedSearch],
+  );
+
+  const projectOptions = useMemo<ProjectComposerOption[]>(() => {
+    const options = filteredComposerProjects.map((project) => ({
+      kind: "project" as const,
+      project,
+    }));
+
+    if (search.trim().length >= 2 && !exactProjectMatch) {
+      options.push({
+        kind: "create",
+        name: search.trim(),
+      });
+    }
+
+    return options;
+  }, [exactProjectMatch, filteredComposerProjects, search]);
+
+  const visibleProjectOptions = useMemo<ProjectComposerOption[]>(
+    () =>
+      normalizedSearch
+        ? projectOptions
+        : recentProjects.map((project) => ({
+            kind: "project" as const,
+            project,
+          })),
+    [normalizedSearch, projectOptions, recentProjects],
+  );
+
+  useEffect(() => {
+    setEntryType("PROJECT");
+    setSearch("");
+    setLeaveName("");
+    setLeaveType("HOLIDAY");
+    setProjectColorKey(DEFAULT_NEW_PROJECT_COLOR_KEY);
+    setShowProjectColorPicker(false);
+    setActiveSuggestionIndex(-1);
+    setBusy(false);
+    setErr(null);
+  }, [pending]);
+
+  useEffect(() => {
+    if (entryType !== "PROJECT") {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [entryType, pending]);
+
+  useEffect(() => {
+    if (visibleProjectOptions.length === 0) {
+      setActiveSuggestionIndex(-1);
+      return;
+    }
+
+    setActiveSuggestionIndex((current) =>
+      current >= visibleProjectOptions.length ? visibleProjectOptions.length - 1 : current,
+    );
+  }, [visibleProjectOptions]);
 
   function handleEntryTypeChange(nextType: TimelineEntryType) {
     setEntryType(nextType);
     setErr(null);
 
-    if (nextType === "LEAVE" && !newName.trim()) {
-      setNewName(leaveLabel);
+    if (nextType === "PROJECT") {
+      setTimeout(() => searchInputRef.current?.focus(), 0);
+    }
+
+    if (nextType === "LEAVE" && !leaveName.trim()) {
+      setLeaveName(leaveLabel);
     }
   }
 
@@ -491,12 +645,55 @@ function AssignmentComposerPopover({
     const currentDefault = getDefaultLabelForLeaveType(leaveType);
     const nextDefault = getDefaultLabelForLeaveType(nextLeaveType);
 
-    if (!newName.trim() || newName.trim() === currentDefault) {
-      setNewName(nextDefault);
+    if (!leaveName.trim() || leaveName.trim() === currentDefault) {
+      setLeaveName(nextDefault);
     }
 
     setLeaveType(nextLeaveType);
     setErr(null);
+  }
+
+  async function submitProjectChoice(option?: ProjectComposerOption) {
+    const trimmed = search.trim();
+
+    if (!trimmed && !option) {
+      return;
+    }
+
+    const resolvedOption =
+      option ??
+      (activeSuggestionIndex >= 0
+        ? visibleProjectOptions[activeSuggestionIndex]
+        : null) ??
+      (exactProjectMatch
+        ? {
+            kind: "project" as const,
+            project: exactProjectMatch,
+          }
+        : trimmed.length >= 2
+          ? {
+              kind: "create" as const,
+              name: trimmed,
+            }
+          : null);
+
+    if (!resolvedOption) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setErr(null);
+
+      if (resolvedOption.kind === "project") {
+        await onChooseProject(resolvedOption.project.id);
+      } else {
+        await onCreateProject(resolvedOption.name, projectColorKey);
+      }
+    } catch (error: any) {
+      setErr(error?.message ?? "Failed to create assignment");
+      setBusy(false);
+    }
   }
 
   return (
@@ -560,120 +757,267 @@ function AssignmentComposerPopover({
           {entryType === "PROJECT" ? (
             <>
               <input
+                ref={searchInputRef}
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search existing projects..."
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setActiveSuggestionIndex(-1);
+                  setErr(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    if (visibleProjectOptions.length === 0) {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    setActiveSuggestionIndex((current) =>
+                      current < visibleProjectOptions.length - 1 ? current + 1 : 0,
+                    );
+                    return;
+                  }
+
+                  if (event.key === "ArrowUp") {
+                    if (visibleProjectOptions.length === 0) {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    setActiveSuggestionIndex((current) =>
+                      current <= 0 ? visibleProjectOptions.length - 1 : current - 1,
+                    );
+                    return;
+                  }
+
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void submitProjectChoice();
+                    return;
+                  }
+
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    onClose();
+                  }
+                }}
+                placeholder="Type project name..."
                 className="mb-3 w-full rounded-2xl bg-slate-50 px-3 py-2.5 text-sm ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300 dark:bg-zinc-900 dark:ring-zinc-800 dark:focus:ring-sky-800"
               />
 
-              <div className="max-h-60 space-y-2 overflow-y-auto overscroll-contain pr-1">
-                {filteredProjects.map((project) => {
-                  const visual = getColorOption(project.colorKey);
+              <div className="rounded-3xl bg-slate-50 p-3 ring-1 ring-slate-200/80 dark:bg-zinc-900/60 dark:ring-zinc-800">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-zinc-500">
+                    {normalizedSearch ? "Suggestions" : "Recent projects"}
+                  </div>
+                  {search.trim() ? (
+                    <div className="text-[11px] text-slate-500 dark:text-zinc-400">
+                      Enter to assign
+                    </div>
+                  ) : null}
+                </div>
 
-                  return (
-                    <button
-                      key={project.id}
-                      type="button"
-                      disabled={busy}
-                      onClick={async () => {
-                        try {
-                          setBusy(true);
-                          setErr(null);
-                          await onChooseProject(project.id);
-                        } catch (error: any) {
-                          setErr(
-                            error?.message ?? "Failed to create assignment",
+                {search.trim() ? (
+                  <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain pr-1">
+                    {visibleProjectOptions.map((option, index) => {
+                      const selected = activeSuggestionIndex === index;
+
+                      if (option.kind === "project") {
+                        const visual = getColorOption(option.project.colorKey);
+
+                        return (
+                          <button
+                            key={option.project.id}
+                            type="button"
+                            disabled={busy}
+                            onMouseEnter={() => setActiveSuggestionIndex(index)}
+                            onClick={() => {
+                              void submitProjectChoice(option);
+                            }}
+                            className={[
+                              "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition",
+                              selected
+                                ? "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/20"
+                                : "border-slate-200/80 bg-white hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
+                            ].join(" ")}
+                          >
+                            <div
+                              className={[
+                                "flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br text-[11px] font-bold ring-1",
+                                visual.swatchClassName,
+                              ].join(" ")}
+                            >
+                              {visual.icon}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">
+                                {option.project.name}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-zinc-400">
+                                {visual.label}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={`create-${option.name.toLowerCase()}`}
+                          type="button"
+                          disabled={busy}
+                          onMouseEnter={() => setActiveSuggestionIndex(index)}
+                          onClick={() => {
+                            void submitProjectChoice(option);
+                          }}
+                          className={[
+                            "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition",
+                            selected
+                              ? "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/20"
+                              : "border-dashed border-slate-200/80 bg-white hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
+                          ].join(" ")}
+                        >
+                          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-100 text-[11px] font-bold text-sky-700 ring-1 ring-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-900/50">
+                            +
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">
+                              Create new project: {option.name}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-zinc-400">
+                              New projects use {projectColorOption.label} by default.
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+
+                    {visibleProjectOptions.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 p-3 text-sm text-slate-500 dark:border-zinc-800 dark:text-zinc-400">
+                        Type at least two characters to search or create a project.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <>
+                    {visibleProjectOptions.length > 0 ? (
+                      <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain pr-1">
+                        {visibleProjectOptions.map((option, index) => {
+                          const selected = activeSuggestionIndex === index;
+                          const visual = getColorOption(option.project.colorKey);
+
+                          return (
+                            <button
+                              key={option.project.id}
+                              type="button"
+                              disabled={busy}
+                              onMouseEnter={() => setActiveSuggestionIndex(index)}
+                              onClick={() => {
+                                void submitProjectChoice(option);
+                              }}
+                              className={[
+                                "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition",
+                                selected
+                                  ? "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/20"
+                                  : "border-slate-200/80 bg-white hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
+                              ].join(" ")}
+                            >
+                              <div
+                                className={[
+                                  "flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br text-[11px] font-bold ring-1",
+                                  visual.swatchClassName,
+                                ].join(" ")}
+                              >
+                                {visual.icon}
+                              </div>
+
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">
+                                  {option.project.name}
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-zinc-400">
+                                  {visual.label}
+                                </div>
+                              </div>
+                            </button>
                           );
-                          setBusy(false);
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slate-200 p-3 text-sm text-slate-500 dark:border-zinc-800 dark:text-zinc-400">
+                        Type a project name, then press Enter to reuse it or create it instantly.
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {search.trim().length >= 2 && !exactProjectMatch ? (
+                  <div className="mt-3 rounded-2xl border border-dashed border-slate-200/80 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/70">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div
+                          className={[
+                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-[10px] font-bold ring-1",
+                            projectColorOption.swatchClassName,
+                          ].join(" ")}
+                        >
+                          {projectColorOption.icon}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">
+                            {projectColorOption.label}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-zinc-400">
+                            New projects use {projectColorOption.label} by default.
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowProjectColorPicker((current) => !current)
                         }
-                      }}
-                      className="flex w-full items-center gap-3 rounded-2xl border border-slate-200/80 bg-white px-3 py-3 text-left transition hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
-                    >
-                      <div
-                        className={[
-                          "flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br text-[11px] font-bold ring-1",
-                          visual.swatchClassName,
-                        ].join(" ")}
+                        className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800 dark:hover:bg-zinc-800"
                       >
-                        {visual.icon}
-                      </div>
+                        {showProjectColorPicker ? "Hide" : "Choose color"}
+                      </button>
+                    </div>
 
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">
-                          {project.name}
-                        </div>
-                        <div className="text-xs text-slate-500 dark:text-zinc-400">
-                          {visual.label}
-                        </div>
+                    {showProjectColorPicker ? (
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        {DEPARTMENT_COLOR_OPTIONS.map((option) => (
+                          <button
+                            key={option.key}
+                            type="button"
+                            onClick={() => {
+                              setProjectColorKey(option.key);
+                            }}
+                            className={[
+                              "flex items-center gap-2 rounded-2xl border px-3 py-2 text-left transition",
+                              projectColorKey === option.key
+                                ? "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/20"
+                                : "border-slate-200/70 bg-white hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
+                            ].join(" ")}
+                          >
+                            <div
+                              className={[
+                                "flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br text-[10px] font-bold ring-1",
+                                option.swatchClassName,
+                              ].join(" ")}
+                            >
+                              {option.icon}
+                            </div>
+                            <span className="truncate text-xs font-medium text-slate-700 dark:text-zinc-300">
+                              {option.label}
+                            </span>
+                          </button>
+                        ))}
                       </div>
-                    </button>
-                  );
-                })}
-
-                {filteredProjects.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 p-3 text-sm text-slate-500 dark:border-zinc-800 dark:text-zinc-400">
-                    No existing project matches this search.
+                    ) : null}
                   </div>
                 ) : null}
-              </div>
-
-              <div className="mt-4 rounded-3xl bg-slate-50 p-3 ring-1 ring-slate-200/80 dark:bg-zinc-900/60 dark:ring-zinc-800">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-zinc-500">
-                  Create a new project
-                </div>
-
-                <input
-                  value={newName}
-                  onChange={(event) => setNewName(event.target.value)}
-                  placeholder="New project name"
-                  className="mt-3 w-full rounded-2xl bg-white px-3 py-2.5 text-sm ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300 dark:bg-zinc-950 dark:ring-zinc-800 dark:focus:ring-sky-800"
-                />
-
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  {DEPARTMENT_COLOR_OPTIONS.slice(0, 6).map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setNewColorKey(option.key)}
-                      className={[
-                        "flex items-center gap-2 rounded-2xl border px-3 py-2 text-left transition",
-                        newColorKey === option.key
-                          ? "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/20"
-                          : "border-slate-200/70 bg-white hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
-                      ].join(" ")}
-                    >
-                      <div
-                        className={[
-                          "flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br text-[10px] font-bold ring-1",
-                          option.swatchClassName,
-                        ].join(" ")}
-                      >
-                        {option.icon}
-                      </div>
-                      <span className="truncate text-xs font-medium text-slate-700 dark:text-zinc-300">
-                        {option.label}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  type="button"
-                  disabled={busy || newName.trim().length < 2}
-                  onClick={async () => {
-                    try {
-                      setBusy(true);
-                      setErr(null);
-                      await onCreateProject(newName.trim(), newColorKey);
-                    } catch (error: any) {
-                      setErr(error?.message ?? "Failed to create project");
-                      setBusy(false);
-                    }
-                  }}
-                  className="mt-3 w-full rounded-2xl bg-sky-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
-                >
-                  {busy ? "Saving..." : "Create project + assign"}
-                </button>
               </div>
             </>
           ) : (
@@ -723,8 +1067,8 @@ function AssignmentComposerPopover({
                 Leave label
               </label>
               <input
-                value={newName}
-                onChange={(event) => setNewName(event.target.value)}
+                value={leaveName}
+                onChange={(event) => setLeaveName(event.target.value)}
                 placeholder={leaveLabel}
                 className="mt-2 w-full rounded-2xl bg-white px-3 py-2.5 text-sm ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300 dark:bg-zinc-950 dark:ring-zinc-800 dark:focus:ring-sky-800"
               />
@@ -737,7 +1081,7 @@ function AssignmentComposerPopover({
                     setBusy(true);
                     setErr(null);
 
-                    const label = newName.trim() || leaveLabel;
+                    const label = leaveName.trim() || leaveLabel;
                     const existingProject =
                       projects.find(
                         (project) =>
@@ -793,6 +1137,9 @@ export function DashboardPage({
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectRailOpen, setProjectRailOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
+  const [zoomMode, setZoomMode] = useState<TimelineZoomMode>("5w");
+  const [densityMode, setDensityMode] =
+    useState<TimelineDensityMode>("comfortable");
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -808,6 +1155,9 @@ export function DashboardPage({
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [placementProjectId, setPlacementProjectId] = useState<string | null>(
+    null,
+  );
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(
     null,
   );
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -826,15 +1176,18 @@ export function DashboardPage({
     null,
   );
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const [timelineStart, setTimelineStart] = useState(() =>
     addDays(startOfMonday(new Date()), -TIMELINE_SHIFT_DAYS),
   );
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rowsContainerRef = useRef<HTMLDivElement | null>(null);
   const initialScrollAppliedRef = useRef(false);
   const pendingScrollAdjustRef = useRef<number | null>(null);
   const rangeShiftLockRef = useRef(false);
+  const ignoreProgrammaticScrollRef = useRef(false);
   const stableLaneMapCacheRef = useRef<
     Record<string, Record<string, number>>
   >({});
@@ -843,6 +1196,14 @@ export function DashboardPage({
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(720);
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(() =>
+    typeof window === "undefined" ? 1280 : window.innerWidth,
+  );
+  const zoomConfig = TIMELINE_ZOOM_OPTIONS[zoomMode];
+  const densityConfig = TIMELINE_DENSITY_OPTIONS[densityMode];
+  const leftWidth = LEFT_COLUMN_WIDTH;
+  const dayWidth = getTimelineDayWidth(zoomMode, timelineViewportWidth, leftWidth);
+  const dayWidthRef = useRef(dayWidth);
 
   function setDraftAssignmentState(nextDraft: DraftAssignment | null) {
     draftAssignmentRef.current = nextDraft;
@@ -861,6 +1222,95 @@ export function DashboardPage({
     setAssignmentPreviewState(null);
     setInteraction(null);
   }
+
+  useEffect(() => {
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const isEditableTarget =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        Boolean(target?.isContentEditable);
+      const hasTransientUi =
+        Boolean(interaction) ||
+        Boolean(draftAssignmentRef.current) ||
+        Boolean(assignmentPreviewRef.current) ||
+        Boolean(pendingComposer) ||
+        Boolean(placementProjectId) ||
+        showNewProject;
+
+      if (event.key === "Escape") {
+        if (!hasTransientUi || (isEditableTarget && !pendingComposer && !showNewProject)) {
+          if (!isEditableTarget && selectedAssignmentId) {
+            event.preventDefault();
+            setSelectedAssignmentId(null);
+          }
+          return;
+        }
+
+        event.preventDefault();
+        clearInlinePlacementState();
+        setShowNewProject(false);
+        setSelectedAssignmentId(null);
+        return;
+      }
+
+      if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        selectedAssignmentId &&
+        !isEditableTarget &&
+        !hasTransientUi
+      ) {
+        event.preventDefault();
+        void handleDelete(selectedAssignmentId);
+      }
+    }
+
+    window.addEventListener("keydown", handleWindowKeyDown);
+    return () => window.removeEventListener("keydown", handleWindowKeyDown);
+  }, [
+    interaction,
+    pendingComposer,
+    placementProjectId,
+    selectedAssignmentId,
+    showNewProject,
+  ]);
+
+  useEffect(() => {
+    if (!interaction) {
+      return;
+    }
+
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor =
+      interaction.mode === "resize"
+        ? "ew-resize"
+        : interaction.mode === "move"
+          ? interaction.duplicate
+            ? "copy"
+            : "grabbing"
+          : "crosshair";
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+    };
+  }, [interaction]);
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setToast((current) => (current?.id === toast.id ? null : current));
+    }, 2200);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [toast]);
 
   function toggleTheme() {
     const nextTheme: Theme = theme === "dark" ? "light" : "dark";
@@ -972,20 +1422,68 @@ export function DashboardPage({
       return;
     }
 
-    scrollRef.current.scrollLeft = TIMELINE_SHIFT_DAYS * DAY_WIDTH;
+    ignoreProgrammaticScrollRef.current = true;
+    scrollRef.current.scrollLeft = TIMELINE_SHIFT_DAYS * dayWidth;
     setViewportHeight(scrollRef.current.clientHeight);
     initialScrollAppliedRef.current = true;
-  }, []);
+    dayWidthRef.current = dayWidth;
+  }, [dayWidth]);
+
+  useEffect(() => {
+    if (!scrollRef.current) {
+      dayWidthRef.current = dayWidth;
+      return;
+    }
+
+    const previousDayWidth = dayWidthRef.current;
+
+    if (previousDayWidth === dayWidth) {
+      return;
+    }
+
+    const visibleDayOffset = scrollRef.current.scrollLeft / previousDayWidth;
+    ignoreProgrammaticScrollRef.current = true;
+    scrollRef.current.scrollLeft = visibleDayOffset * dayWidth;
+    dayWidthRef.current = dayWidth;
+  }, [dayWidth]);
 
   useEffect(() => {
     if (!scrollRef.current || pendingScrollAdjustRef.current === null) {
       return;
     }
 
+    ignoreProgrammaticScrollRef.current = true;
     scrollRef.current.scrollLeft += pendingScrollAdjustRef.current;
     pendingScrollAdjustRef.current = null;
     rangeShiftLockRef.current = false;
   }, [days]);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    const syncViewportMetrics = () => {
+      setViewportHeight(element.clientHeight);
+      setTimelineViewportWidth(element.clientWidth);
+    };
+
+    syncViewportMetrics();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => {
+        syncViewportMetrics();
+      });
+
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", syncViewportMetrics);
+    return () => window.removeEventListener("resize", syncViewportMetrics);
+  }, [projectRailOpen]);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -1025,6 +1523,61 @@ export function DashboardPage({
       !trimmed ? true : project.name.toLowerCase().includes(trimmed),
     );
   }, [deferredProjectSearch, projects]);
+
+  const recentComposerProjects = useMemo(() => {
+    const projectMap = new Map(
+      projects.map((project) => [project.id, project] as const),
+    );
+    const recentById = new Map<string, Project>();
+
+    const sortedAssignments = [...assignments].sort((left, right) => {
+      const rightTime = new Date(
+        right.updatedAt ?? right.createdAt ?? right.startDate,
+      ).getTime();
+      const leftTime = new Date(
+        left.updatedAt ?? left.createdAt ?? left.startDate,
+      ).getTime();
+
+      return rightTime - leftTime;
+    });
+
+    for (const assignment of sortedAssignments) {
+      const project = projectMap.get(assignment.projectId);
+
+      if (!project || isLeaveColorKey(project.colorKey)) {
+        continue;
+      }
+
+      if (!recentById.has(project.id)) {
+        recentById.set(project.id, project);
+      }
+
+      if (recentById.size >= 6) {
+        break;
+      }
+    }
+
+    if (recentById.size < 6) {
+      const fallbackProjects = [...projects]
+        .filter((project) => !isLeaveColorKey(project.colorKey))
+        .sort(
+          (left, right) =>
+            new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+        );
+
+      for (const project of fallbackProjects) {
+        if (!recentById.has(project.id)) {
+          recentById.set(project.id, project);
+        }
+
+        if (recentById.size >= 6) {
+          break;
+        }
+      }
+    }
+
+    return Array.from(recentById.values());
+  }, [assignments, projects]);
 
   const selectedTeam = useMemo(
     () => DEMO_TEAMS.find((team) => team.id === selectedTeamId) ?? null,
@@ -1068,23 +1621,92 @@ export function DashboardPage({
     };
   }, [pendingComposer, showNewProject]);
 
+  const duplicatePreviewAssignment = useMemo(() => {
+    if (interaction?.mode !== "move" || !interaction.duplicate) {
+      return null;
+    }
+
+    const sourceAssignment = assignments.find(
+      (assignment) => assignment.id === interaction.assignmentId,
+    );
+
+    if (!sourceAssignment) {
+      return null;
+    }
+
+    const preview = assignmentPreview ?? {
+      assignmentId: interaction.assignmentId,
+      startDate: interaction.originalStartDate,
+      endDate: interaction.originalEndDate,
+      userId: interaction.originalUserId,
+      laneIndex: interaction.originalLaneIndex,
+    };
+
+    return {
+      ...sourceAssignment,
+      id: DUPLICATE_PREVIEW_ASSIGNMENT_ID,
+      startDate: preview.startDate,
+      endDate: preview.endDate,
+      userId: preview.userId ?? interaction.originalUserId,
+      laneIndex: preview.laneIndex ?? interaction.originalLaneIndex,
+    } satisfies TimelineAssignmentLike;
+  }, [assignmentPreview, assignments, interaction]);
+
+  const moveGhostAssignment = useMemo(() => {
+    if (interaction?.mode !== "move") {
+      return null;
+    }
+
+    const sourceAssignment = assignments.find(
+      (assignment) => assignment.id === interaction.assignmentId,
+    );
+
+    if (!sourceAssignment) {
+      return null;
+    }
+
+    return {
+      assignmentId: interaction.assignmentId,
+      projectId: sourceAssignment.projectId,
+      userId: interaction.originalUserId,
+      laneIndex: interaction.originalLaneIndex,
+      startDate: interaction.originalStartDate,
+      endDate: interaction.originalEndDate,
+    };
+  }, [assignments, interaction]);
+
   const previewedAssignments = useMemo(() => {
-    const nextAssignments = assignments.map((assignment) =>
-      assignmentPreview && assignment.id === assignmentPreview.assignmentId
-        ? {
-            ...assignment,
-            startDate: assignmentPreview.startDate,
-            endDate: assignmentPreview.endDate,
-          }
-        : assignment,
-    ) as TimelineAssignmentLike[];
+    const nextAssignments =
+      interaction?.mode === "move" && interaction.duplicate
+        ? [...assignments]
+        : assignments.map((assignment) =>
+            assignmentPreview && assignment.id === assignmentPreview.assignmentId
+              ? {
+                  ...assignment,
+                  startDate: assignmentPreview.startDate,
+                  endDate: assignmentPreview.endDate,
+                  userId: assignmentPreview.userId ?? assignment.userId,
+                  laneIndex: assignmentPreview.laneIndex ?? assignment.laneIndex,
+                }
+              : assignment,
+          );
 
     if (draftAssignment) {
       nextAssignments.unshift(draftAssignment);
     }
 
+    if (duplicatePreviewAssignment) {
+      nextAssignments.unshift(duplicatePreviewAssignment);
+    }
+
     return nextAssignments;
-  }, [assignmentPreview, assignments, draftAssignment]);
+  }, [
+    assignmentPreview,
+    assignments,
+    draftAssignment,
+    duplicatePreviewAssignment,
+    interaction,
+  ]);
 
   const draftProject = useMemo(() => {
     if (!draftAssignment || draftAssignment.projectId !== DRAFT_PROJECT_ID) {
@@ -1125,7 +1747,7 @@ export function DashboardPage({
     return map;
   }, [previewedAssignments]);
 
-  const stableLaneMapByUser = useMemo(() => {
+  const committedStableLaneMapByUser = useMemo(() => {
     const map: Record<string, Record<string, number>> = {};
 
     for (const [userId, userAssignments] of Object.entries(
@@ -1148,8 +1770,28 @@ export function DashboardPage({
   }, [assignments]);
 
   useEffect(() => {
-    stableLaneMapCacheRef.current = stableLaneMapByUser;
-  }, [stableLaneMapByUser]);
+    stableLaneMapCacheRef.current = committedStableLaneMapByUser;
+  }, [committedStableLaneMapByUser]);
+
+  const preferredLaneByUser = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+
+    for (const [userId, userAssignments] of Object.entries(assignmentsByUser)) {
+      const lanePreferences = {
+        ...(committedStableLaneMapByUser[userId] ?? {}),
+      };
+
+      for (const assignment of userAssignments) {
+        if (typeof assignment.laneIndex === "number") {
+          lanePreferences[assignment.id] = Math.max(0, assignment.laneIndex);
+        }
+      }
+
+      map[userId] = lanePreferences;
+    }
+
+    return map;
+  }, [assignmentsByUser, committedStableLaneMapByUser]);
 
   const lockedAssignmentId =
     interaction?.mode === "create"
@@ -1167,9 +1809,12 @@ export function DashboardPage({
         projectsById,
         days,
         {
-          preferredLaneByAssignmentId: stableLaneMapByUser[user.id],
+          preferredLaneByAssignmentId: preferredLaneByUser[user.id],
           lockedAssignmentId,
           freezePreferredLanes,
+          laneHeight: densityConfig.laneHeight,
+          rowPaddingY: densityConfig.rowPaddingY,
+          minRowHeight: densityConfig.minRowHeight,
         },
       );
       const row = {
@@ -1187,8 +1832,11 @@ export function DashboardPage({
     filteredUsers,
     freezePreferredLanes,
     lockedAssignmentId,
+    densityConfig.laneHeight,
+    densityConfig.minRowHeight,
+    densityConfig.rowPaddingY,
     projectsById,
-    stableLaneMapByUser,
+    preferredLaneByUser,
   ]);
 
   const totalRowsHeight =
@@ -1196,6 +1844,13 @@ export function DashboardPage({
       ? rowMetrics[rowMetrics.length - 1].top +
         rowMetrics[rowMetrics.length - 1].height
       : 0;
+  const rowMetricsRef = useRef(rowMetrics);
+  const totalRowsHeightRef = useRef(totalRowsHeight);
+
+  useEffect(() => {
+    rowMetricsRef.current = rowMetrics;
+    totalRowsHeightRef.current = totalRowsHeight;
+  }, [rowMetrics, totalRowsHeight]);
 
   const visibleRowRange = useMemo(() => {
     if (rowMetrics.length === 0) {
@@ -1218,6 +1873,85 @@ export function DashboardPage({
     () => rowMetrics.slice(visibleRowRange.start, visibleRowRange.end),
     [rowMetrics, visibleRowRange.end, visibleRowRange.start],
   );
+  const activeMoveAssignmentId =
+    interaction?.mode === "move" && !interaction.duplicate
+      ? interaction.assignmentId
+      : null;
+  const activeMoveTargetUserId =
+    interaction?.mode === "move"
+      ? assignmentPreview?.userId ?? interaction.originalUserId
+      : null;
+  const activeMoveTargetLaneIndex =
+    interaction?.mode === "move"
+      ? assignmentPreview?.laneIndex ?? interaction.originalLaneIndex
+      : null;
+  const activeMoveTargetUser =
+    activeMoveTargetUserId !== null
+      ? rowMetrics.find((row) => row.user.id === activeMoveTargetUserId)?.user ??
+        users.find((user) => user.id === activeMoveTargetUserId) ??
+        null
+      : null;
+  const activeMoveStatusLabel =
+    interaction?.mode === "move" && activeMoveTargetUser
+      ? interaction.horizontalLock
+        ? interaction.duplicate
+          ? `Duplicate in ${activeMoveTargetUser.displayName}`
+          : `Move in ${activeMoveTargetUser.displayName}`
+        : interaction.duplicate
+          ? activeMoveTargetUser.id === interaction.originalUserId
+            ? `Duplicate in ${activeMoveTargetUser.displayName}`
+            : `Duplicate to ${activeMoveTargetUser.displayName}`
+          : activeMoveTargetUser.id === interaction.originalUserId
+            ? `Reorder in ${activeMoveTargetUser.displayName}`
+            : `Move to ${activeMoveTargetUser.displayName}`
+      : null;
+  const activeMoveStatusText =
+    interaction?.mode === "move" && interaction.horizontalLock
+      ? activeMoveStatusLabel
+        ? `${activeMoveStatusLabel} · Horizontal lock`
+        : "Horizontal lock"
+      : activeMoveStatusLabel;
+
+  function resolveMoveTarget(clientY: number, fallbackUserId: string, fallbackLaneIndex: number) {
+    const rowsElement = rowsContainerRef.current;
+    const currentRowMetrics = rowMetricsRef.current;
+    const currentTotalRowsHeight = totalRowsHeightRef.current;
+
+    if (!rowsElement || currentRowMetrics.length === 0) {
+      return {
+        userId: fallbackUserId,
+        laneIndex: fallbackLaneIndex,
+      };
+    }
+
+    const rowsRect = rowsElement.getBoundingClientRect();
+    const clampedOffsetY = Math.max(
+      0,
+      Math.min(clientY - rowsRect.top, Math.max(0, currentTotalRowsHeight - 1)),
+    );
+    const targetRow = findRowAtOffset(currentRowMetrics, clampedOffsetY);
+
+    if (!targetRow) {
+      return {
+        userId: fallbackUserId,
+        laneIndex: fallbackLaneIndex,
+      };
+    }
+
+    const offsetWithinRow = clampedOffsetY - targetRow.top;
+    const rawLaneIndex = Math.floor(
+      (offsetWithinRow - densityConfig.rowPaddingY + densityConfig.laneHeight / 2) /
+        densityConfig.laneHeight,
+    );
+
+    return {
+      userId: targetRow.user.id,
+      laneIndex: Math.max(
+        0,
+        Math.min(targetRow.layout.laneCount, rawLaneIndex),
+      ),
+    };
+  }
 
   const drawerAssignments = useMemo(() => {
     if (!drawerProjectId) {
@@ -1303,13 +2037,14 @@ export function DashboardPage({
     const anchorRect = anchorEl.getBoundingClientRect();
 
     beginDraftAssignment(userId, projectId, dayIndex);
+    setSelectedAssignmentId(null);
     setPendingComposer(null);
     setAssignmentPreviewState(null);
     setInteraction({
       mode: "create",
       userId,
       anchorIndex: dayIndex,
-      originClientX: anchorRect.left + DAY_WIDTH / 2,
+      originClientX: anchorRect.left + dayWidth / 2,
       anchorRect,
       projectId,
     });
@@ -1338,33 +2073,105 @@ export function DashboardPage({
     });
   }
 
-  function handleMoveStart(assignmentId: string, originClientX: number) {
+  function handleMoveStart({
+    assignmentId,
+    originClientX,
+    originClientY,
+    userId,
+    laneIndex,
+    duplicate,
+    horizontalLock,
+  }: {
+    assignmentId: string;
+    originClientX: number;
+    originClientY: number;
+    userId: string;
+    laneIndex: number;
+    duplicate: boolean;
+    horizontalLock: boolean;
+  }) {
     const assignment = assignments.find((item) => item.id === assignmentId);
 
     if (!assignment) {
       return;
     }
 
-    setAssignmentPreviewState(null);
+    setAssignmentPreviewState({
+      assignmentId,
+      startDate: assignment.startDate,
+      endDate: assignment.endDate,
+      userId,
+      laneIndex,
+    });
     setInteraction({
       mode: "move",
       assignmentId,
+      duplicate,
+      horizontalLock,
       originClientX,
+      originClientY,
       originalStartDate: assignment.startDate,
       originalEndDate: assignment.endDate,
+      originalUserId: userId,
+      originalLaneIndex: laneIndex,
       projectId: assignment.projectId,
     });
   }
 
   async function handleDelete(assignmentId: string) {
+    if (!window.confirm("Delete this assignment?")) {
+      return;
+    }
+
     try {
       await deleteAssignment(assignmentId);
       setAssignments((previous) =>
         previous.filter((assignment) => assignment.id !== assignmentId),
       );
+      setSelectedAssignmentId((current) =>
+        current === assignmentId ? null : current,
+      );
       setActivityRefreshKey((value) => value + 1);
     } catch (error: any) {
       window.alert(error?.message ?? "Failed to delete assignment");
+    }
+  }
+
+  async function handleDuplicate(assignmentId: string) {
+    const sourceAssignment = assignments.find(
+      (assignment) => assignment.id === assignmentId,
+    );
+
+    if (!sourceAssignment) {
+      return;
+    }
+
+    try {
+      const created = await createAssignment(
+        sourceAssignment.userId,
+        sourceAssignment.projectId,
+        sourceAssignment.startDate,
+        endExclusiveToWorkingLength(
+          sourceAssignment.startDate,
+          sourceAssignment.endDate,
+          holidayMap,
+        ),
+        {
+          laneIndex:
+            typeof sourceAssignment.laneIndex === "number"
+              ? sourceAssignment.laneIndex + 1
+              : undefined,
+        },
+      );
+
+      setAssignments((previous) => [created, ...previous]);
+      setActivityRefreshKey((value) => value + 1);
+      setToast({
+        id: Date.now(),
+        message: "Duplicated assignment",
+      });
+    } catch (error: any) {
+      window.alert(error?.message ?? "Failed to duplicate assignment");
     }
   }
 
@@ -1541,7 +2348,7 @@ export function DashboardPage({
 
     function handleMouseMove(event: MouseEvent) {
       const calendarDelta = Math.round(
-        (event.clientX - activeInteraction.originClientX) / DAY_WIDTH,
+        (event.clientX - activeInteraction.originClientX) / dayWidth,
       );
 
       if (activeInteraction.mode === "create") {
@@ -1555,13 +2362,28 @@ export function DashboardPage({
       }
 
       if (activeInteraction.mode === "move") {
+        const moveTarget = activeInteraction.horizontalLock
+          ? {
+              userId: activeInteraction.originalUserId,
+              laneIndex: activeInteraction.originalLaneIndex,
+            }
+          : resolveMoveTarget(
+              event.clientY,
+              activeInteraction.originalUserId,
+              activeInteraction.originalLaneIndex,
+            );
+
         setAssignmentPreviewState(
-          buildMovePreview(
-            activeInteraction.assignmentId,
-            activeInteraction.originalStartDate,
-            activeInteraction.originalEndDate,
-            calendarDelta,
-          ),
+          {
+            ...buildMovePreview(
+              activeInteraction.assignmentId,
+              activeInteraction.originalStartDate,
+              activeInteraction.originalEndDate,
+              calendarDelta,
+            ),
+            userId: moveTarget.userId,
+            laneIndex: moveTarget.laneIndex,
+          },
         );
         return;
       }
@@ -1619,15 +2441,58 @@ export function DashboardPage({
         const activePreview = assignmentPreviewRef.current;
 
         if (!activePreview) {
-          setDrawerProjectId(activeInteraction.projectId);
+          return;
+        }
+
+        const previewUserId =
+          activeInteraction.mode === "move"
+            ? activePreview.userId ?? activeInteraction.originalUserId
+            : undefined;
+        const previewLaneIndex =
+          activeInteraction.mode === "move"
+            ? activePreview.laneIndex ?? activeInteraction.originalLaneIndex
+            : undefined;
+        const sameMoveTarget =
+          activeInteraction.mode !== "move" ||
+          (previewUserId === activeInteraction.originalUserId &&
+            previewLaneIndex === activeInteraction.originalLaneIndex);
+
+        if (activeInteraction.mode === "move" && activeInteraction.duplicate) {
+          const created = await createAssignment(
+            previewUserId ?? activeInteraction.originalUserId,
+            activeInteraction.projectId,
+            activePreview.startDate,
+            endExclusiveToWorkingLength(
+              activePreview.startDate,
+              activePreview.endDate,
+              holidayMap,
+            ),
+            {
+              laneIndex: previewLaneIndex,
+            },
+          );
+
+          setAssignments((previous) => [created, ...previous]);
+          setActivityRefreshKey((value) => value + 1);
+          setToast({
+            id: Date.now(),
+            message:
+              previewUserId &&
+              previewUserId !== activeInteraction.originalUserId
+                ? `Duplicated to ${
+                    users.find((user) => user.id === previewUserId)?.displayName ??
+                    "new person"
+                  }`
+                : "Duplicated assignment",
+          });
           return;
         }
 
         if (
           activePreview.startDate === activeInteraction.originalStartDate &&
-          activePreview.endDate === activeInteraction.originalEndDate
+          activePreview.endDate === activeInteraction.originalEndDate &&
+          sameMoveTarget
         ) {
-          setDrawerProjectId(activeInteraction.projectId);
           return;
         }
 
@@ -1638,6 +2503,12 @@ export function DashboardPage({
             activePreview.endDate,
             holidayMap,
           ),
+          ...(activeInteraction.mode === "move"
+            ? {
+                userId: previewUserId,
+                laneIndex: previewLaneIndex,
+              }
+            : {}),
         });
 
         setAssignments((previous) =>
@@ -1646,6 +2517,19 @@ export function DashboardPage({
           ),
         );
         setActivityRefreshKey((value) => value + 1);
+        const toastMessage =
+          activeInteraction.mode === "move" &&
+          previewUserId &&
+          previewUserId !== activeInteraction.originalUserId
+            ? `Moved to ${
+                users.find((user) => user.id === previewUserId)?.displayName ??
+                "new person"
+              }`
+            : "Updated assignment";
+        setToast({
+          id: Date.now(),
+          message: toastMessage,
+        });
       } catch (error: any) {
         window.alert(error?.message ?? "Failed to update assignment");
       } finally {
@@ -1661,30 +2545,36 @@ export function DashboardPage({
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [holidayMap, interaction, days]);
+  }, [dayWidth, holidayMap, interaction, users]);
 
   function handleTimelineScroll(event: React.UIEvent<HTMLDivElement>) {
     const element = event.currentTarget;
     setScrollTop(element.scrollTop);
     setViewportHeight(element.clientHeight);
+    setTimelineViewportWidth(element.clientWidth);
+
+    if (ignoreProgrammaticScrollRef.current) {
+      ignoreProgrammaticScrollRef.current = false;
+      return;
+    }
 
     if (rangeShiftLockRef.current) {
       return;
     }
 
-    const threshold = TIMELINE_EDGE_BUFFER_DAYS * DAY_WIDTH;
+    const threshold = TIMELINE_EDGE_BUFFER_DAYS * dayWidth;
     const maxScrollLeft = element.scrollWidth - element.clientWidth;
 
     if (element.scrollLeft < threshold) {
       rangeShiftLockRef.current = true;
-      pendingScrollAdjustRef.current = TIMELINE_SHIFT_DAYS * DAY_WIDTH;
+      pendingScrollAdjustRef.current = TIMELINE_SHIFT_DAYS * dayWidth;
       setTimelineStart((previous) => addDays(previous, -TIMELINE_SHIFT_DAYS));
       return;
     }
 
     if (maxScrollLeft - element.scrollLeft < threshold) {
       rangeShiftLockRef.current = true;
-      pendingScrollAdjustRef.current = -TIMELINE_SHIFT_DAYS * DAY_WIDTH;
+      pendingScrollAdjustRef.current = -TIMELINE_SHIFT_DAYS * dayWidth;
       setTimelineStart((previous) => addDays(previous, TIMELINE_SHIFT_DAYS));
     }
   }
@@ -1762,28 +2652,80 @@ export function DashboardPage({
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!scrollRef.current) {
-                      return;
-                    }
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {activeMoveStatusText ? (
+                    <div className="rounded-2xl bg-sky-50 px-3 py-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200 shadow-sm dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800">
+                      {activeMoveStatusText}
+                    </div>
+                  ) : null}
 
-                    setTimelineStart(
-                      addDays(startOfMonday(new Date()), -TIMELINE_SHIFT_DAYS),
-                    );
+                  <div className="inline-flex rounded-2xl bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+                    {(Object.entries(TIMELINE_ZOOM_OPTIONS) as Array<
+                      [TimelineZoomMode, (typeof TIMELINE_ZOOM_OPTIONS)[TimelineZoomMode]]
+                    >).map(([mode, option]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setZoomMode(mode)}
+                        className={[
+                          "rounded-xl px-2.5 py-1.5 text-[11px] font-medium transition",
+                          zoomMode === mode
+                            ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
+                            : "text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200",
+                        ].join(" ")}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
 
-                    requestAnimationFrame(() => {
-                      if (scrollRef.current) {
-                        scrollRef.current.scrollLeft =
-                          TIMELINE_SHIFT_DAYS * DAY_WIDTH;
+                  <div className="inline-flex rounded-2xl bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+                    {(Object.entries(TIMELINE_DENSITY_OPTIONS) as Array<
+                      [
+                        TimelineDensityMode,
+                        (typeof TIMELINE_DENSITY_OPTIONS)[TimelineDensityMode],
+                      ]
+                    >).map(([mode, option]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setDensityMode(mode)}
+                        className={[
+                          "rounded-xl px-2.5 py-1.5 text-[11px] font-medium transition",
+                          densityMode === mode
+                            ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
+                            : "text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200",
+                        ].join(" ")}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!scrollRef.current) {
+                        return;
                       }
-                    });
-                  }}
-                  className="rounded-2xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 shadow-sm transition hover:bg-slate-50 dark:bg-zinc-950 dark:text-zinc-300 dark:ring-zinc-800 dark:hover:bg-zinc-900"
-                >
-                  Jump to today
-                </button>
+
+                      setTimelineStart(
+                        addDays(startOfMonday(new Date()), -TIMELINE_SHIFT_DAYS),
+                      );
+
+                      requestAnimationFrame(() => {
+                        if (scrollRef.current) {
+                          ignoreProgrammaticScrollRef.current = true;
+                          scrollRef.current.scrollLeft =
+                            TIMELINE_SHIFT_DAYS * dayWidth;
+                        }
+                      });
+                    }}
+                    className="rounded-2xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 shadow-sm transition hover:bg-slate-50 dark:bg-zinc-950 dark:text-zinc-300 dark:ring-zinc-800 dark:hover:bg-zinc-900"
+                  >
+                    Jump to today
+                  </button>
+                </div>
               </div>
 
               <div
@@ -1793,13 +2735,13 @@ export function DashboardPage({
               >
                 <div
                   style={{
-                    minWidth: LEFT_COLUMN_WIDTH + days.length * DAY_WIDTH,
+                    minWidth: leftWidth + days.length * dayWidth,
                   }}
                 >
                   <TimelineHeader
                     days={days}
-                    dayWidth={DAY_WIDTH}
-                    leftWidth={LEFT_COLUMN_WIDTH}
+                    dayWidth={dayWidth}
+                    leftWidth={leftWidth}
                     isHoliday={(date) => isHoliday(date, holidayMap)}
                     todayIndex={todayIndex}
                   />
@@ -1816,7 +2758,11 @@ export function DashboardPage({
                     </div>
                   ) : null}
 
-                  <div className="relative" style={{ height: totalRowsHeight }}>
+                  <div
+                    ref={rowsContainerRef}
+                    className="relative"
+                    style={{ height: totalRowsHeight }}
+                  >
                     {visibleRows.map((row) => (
                       <div
                         key={row.user.id}
@@ -1826,8 +2772,17 @@ export function DashboardPage({
                         <UserRowLine
                           u={row.user}
                           days={days}
-                          dayWidth={DAY_WIDTH}
-                          leftWidth={LEFT_COLUMN_WIDTH}
+                          dayWidth={dayWidth}
+                          leftWidth={leftWidth}
+                          laneHeight={densityConfig.laneHeight}
+                          rowPaddingY={densityConfig.rowPaddingY}
+                          barHeight={densityConfig.barHeight}
+                          densityMode={densityMode}
+                          targetLaneIndex={
+                            activeMoveTargetUserId === row.user.id
+                              ? activeMoveTargetLaneIndex
+                              : null
+                          }
                           layout={row.layout}
                           projectsById={projectsById}
                           draftAssignmentId={draftAssignment?.id ?? null}
@@ -1835,9 +2790,28 @@ export function DashboardPage({
                           onCellPointerDown={handleCellPointerDown}
                           onResizeStart={handleResizeStart}
                           onMoveStart={handleMoveStart}
+                          onSelectAssignment={setSelectedAssignmentId}
                           onDelete={handleDelete}
+                          onDuplicate={handleDuplicate}
                           onOpenProject={setDrawerProjectId}
                           isHoliday={(date) => isHoliday(date, holidayMap)}
+                          activeMoveAssignmentId={activeMoveAssignmentId}
+                          duplicatePreviewAssignmentId={
+                            duplicatePreviewAssignment?.id ?? null
+                          }
+                          selectedAssignmentId={selectedAssignmentId}
+                          ghostAssignment={
+                            moveGhostAssignment?.userId === row.user.id
+                              ? {
+                                  assignmentId: moveGhostAssignment.assignmentId,
+                                  projectId: moveGhostAssignment.projectId,
+                                  startDate: moveGhostAssignment.startDate,
+                                  endDate: moveGhostAssignment.endDate,
+                                  laneIndex: moveGhostAssignment.laneIndex,
+                                }
+                              : null
+                          }
+                          isMoveTarget={activeMoveTargetUserId === row.user.id}
                         />
                       </div>
                     ))}
@@ -1917,6 +2891,7 @@ export function DashboardPage({
           <AssignmentComposerPopover
             pending={pendingComposer}
             projects={projects}
+            recentProjects={recentComposerProjects}
             onClose={clearInlinePlacementState}
             onChooseProject={async (projectId) => {
               await persistAssignmentDraft(projectId);
@@ -1942,6 +2917,14 @@ export function DashboardPage({
           onSaveMetadata={handleSaveProjectMetadata}
           colorOptions={COLOR_OPTIONS}
         />
+
+        {toast ? (
+          <div className="pointer-events-none fixed bottom-5 right-5 z-50">
+            <div className="rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-3 text-sm font-medium text-slate-700 shadow-xl backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-200">
+              {toast.message}
+            </div>
+          </div>
+        ) : null}
 
         <NewProjectModal
           open={showNewProject}

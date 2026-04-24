@@ -2,16 +2,98 @@ import type { AssignmentRow, Project, ProjectDepartment } from "./api";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-export const DAY_WIDTH = 24;
-export const LEFT_COLUMN_WIDTH = 196;
+export const DAY_WIDTH = 38;
+export const LEFT_COLUMN_WIDTH = 168;
 export const TIMELINE_WINDOW_DAYS = 420;
 export const TIMELINE_SHIFT_DAYS = 126;
 export const TIMELINE_EDGE_BUFFER_DAYS = 70;
 export const ROW_OVERSCAN = 8;
-export const LANE_HEIGHT = 28;
-export const ROW_PADDING_Y = 8;
+export const LANE_HEIGHT = 36;
+export const ROW_PADDING_Y = 10;
+export const MIN_ROW_HEIGHT = 64;
 
 export type HolidayRegion = "DE" | "DE-SH";
+export type TimelineZoomMode = "5w" | "3m" | "6m";
+export type TimelineDensityMode = "comfortable" | "compact";
+
+export const TIMELINE_ZOOM_OPTIONS: Record<
+  TimelineZoomMode,
+  {
+    label: string;
+    targetVisibleDays: number;
+    minDayWidth: number;
+    maxDayWidth: number;
+    fallbackDayWidth: number;
+  }
+> = {
+  "5w": {
+    label: "5 weeks",
+    targetVisibleDays: 35,
+    minDayWidth: DAY_WIDTH,
+    maxDayWidth: 56,
+    fallbackDayWidth: DAY_WIDTH,
+  },
+  "3m": {
+    label: "3 months",
+    targetVisibleDays: 91,
+    minDayWidth: 12,
+    maxDayWidth: 18,
+    fallbackDayWidth: 15,
+  },
+  "6m": {
+    label: "6 months",
+    targetVisibleDays: 182,
+    minDayWidth: 8,
+    maxDayWidth: 12,
+    fallbackDayWidth: 8,
+  },
+};
+
+export const TIMELINE_DENSITY_OPTIONS: Record<
+  TimelineDensityMode,
+  {
+    label: string;
+    laneHeight: number;
+    rowPaddingY: number;
+    barHeight: number;
+    minRowHeight: number;
+  }
+> = {
+  comfortable: {
+    label: "Comfortable",
+    laneHeight: LANE_HEIGHT,
+    rowPaddingY: ROW_PADDING_Y,
+    barHeight: 32,
+    minRowHeight: MIN_ROW_HEIGHT,
+  },
+  compact: {
+    label: "Compact",
+    laneHeight: 30,
+    rowPaddingY: 8,
+    barHeight: 26,
+    minRowHeight: 54,
+  },
+};
+
+export function getTimelineDayWidth(
+  zoomMode: TimelineZoomMode,
+  viewportWidth: number,
+  leftWidth = LEFT_COLUMN_WIDTH,
+) {
+  const option = TIMELINE_ZOOM_OPTIONS[zoomMode];
+  const usableWidth = viewportWidth - leftWidth - 24;
+
+  if (usableWidth <= 0) {
+    return option.fallbackDayWidth;
+  }
+
+  const idealDayWidth = Math.round(usableWidth / option.targetVisibleDays);
+
+  return Math.max(
+    option.minDayWidth,
+    Math.min(option.maxDayWidth, idealDayWidth),
+  );
+}
 
 export type PlanningColorOption = {
   key: string;
@@ -35,7 +117,7 @@ export type LeaveType =
 
 export type TimelineAssignmentLike = Pick<
   AssignmentRow,
-  "id" | "userId" | "projectId" | "startDate" | "endDate"
+  "id" | "userId" | "projectId" | "startDate" | "endDate" | "laneIndex"
 > & {
   isDraft?: boolean;
 };
@@ -658,8 +740,14 @@ export function buildUserRowLayout<T extends TimelineAssignmentLike>(
     preferredLaneByAssignmentId?: Record<string, number>;
     lockedAssignmentId?: string | null;
     freezePreferredLanes?: boolean;
+    laneHeight?: number;
+    rowPaddingY?: number;
+    minRowHeight?: number;
   },
 ) {
+  const laneHeight = options?.laneHeight ?? LANE_HEIGHT;
+  const rowPaddingY = options?.rowPaddingY ?? ROW_PADDING_Y;
+  const minRowHeight = options?.minRowHeight ?? MIN_ROW_HEIGHT;
   const visibleAssignments = assignments
     .map((assignment) => {
       const project = projectsById[assignment.projectId];
@@ -707,6 +795,14 @@ export function buildUserRowLayout<T extends TimelineAssignmentLike>(
 
       if (leftPreferred !== rightPreferred) {
         return leftPreferred - rightPreferred;
+      }
+
+      const leftHasExplicitLane = typeof left!.assignment.laneIndex === "number";
+      const rightHasExplicitLane =
+        typeof right!.assignment.laneIndex === "number";
+
+      if (leftHasExplicitLane !== rightHasExplicitLane) {
+        return leftHasExplicitLane ? -1 : 1;
       }
 
       if (left!.clampedStart !== right!.clampedStart) {
@@ -786,7 +882,7 @@ export function buildUserRowLayout<T extends TimelineAssignmentLike>(
   return {
     lanes,
     laneCount,
-    rowHeight: Math.max(56, laneCount * LANE_HEIGHT + ROW_PADDING_Y * 2),
+    rowHeight: Math.max(minRowHeight, laneCount * laneHeight + rowPaddingY * 2),
   } satisfies UserRowLayout<T>;
 }
 
