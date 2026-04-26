@@ -566,7 +566,7 @@ function AssignmentComposerPopover({
   );
 
   const projectOptions = useMemo<ProjectComposerOption[]>(() => {
-    const options = filteredComposerProjects.map((project) => ({
+    const options: ProjectComposerOption[] = filteredComposerProjects.map((project) => ({
       kind: "project" as const,
       project,
     }));
@@ -904,6 +904,10 @@ function AssignmentComposerPopover({
                     {visibleProjectOptions.length > 0 ? (
                       <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain pr-1">
                         {visibleProjectOptions.map((option, index) => {
+                          if (option.kind !== "project") {
+                            return null;
+                          }
+
                           const selected = activeSuggestionIndex === index;
                           const visual = getColorOption(option.project.colorKey);
 
@@ -1199,7 +1203,6 @@ export function DashboardPage({
   const [timelineViewportWidth, setTimelineViewportWidth] = useState(() =>
     typeof window === "undefined" ? 1280 : window.innerWidth,
   );
-  const zoomConfig = TIMELINE_ZOOM_OPTIONS[zoomMode];
   const densityConfig = TIMELINE_DENSITY_OPTIONS[densityMode];
   const leftWidth = LEFT_COLUMN_WIDTH;
   const dayWidth = getTimelineDayWidth(zoomMode, timelineViewportWidth, leftWidth);
