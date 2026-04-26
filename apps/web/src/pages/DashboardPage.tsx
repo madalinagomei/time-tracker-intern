@@ -2641,28 +2641,28 @@ export function DashboardPage({
               </div>
             </aside>
 
-            <section className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[30px] border border-slate-200/80 bg-white/90 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/95">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-4 py-3 dark:border-zinc-800">
+            <section className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[30px] border border-slate-200/80 bg-white shadow-[0_24px_56px_-34px_rgba(15,23,42,0.24)] dark:border-zinc-800/55 dark:bg-zinc-950 dark:shadow-[0_24px_56px_-34px_rgba(0,0,0,0.62)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-white/92 px-4 py-3 backdrop-blur-md dark:border-zinc-800/60 dark:bg-zinc-950">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800">
+                  <div className="rounded-full bg-slate-100/90 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200/80 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800">
                     {selectedTeam?.name ?? "All teams"}
                   </div>
-                  <div className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800">
+                  <div className="rounded-full bg-slate-100/90 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200/80 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800">
                     {filteredUsers.length} people
                   </div>
-                  <div className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800">
+                  <div className="rounded-full bg-slate-100/90 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200/80 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800">
                     {projects.length} projects
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   {activeMoveStatusText ? (
-                    <div className="rounded-2xl bg-sky-50 px-3 py-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200 shadow-sm dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800">
+                    <div className="rounded-2xl bg-sky-50/88 px-3 py-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200/80 shadow-[0_10px_24px_-22px_rgba(14,165,233,0.36)] dark:bg-sky-950/36 dark:text-sky-200 dark:ring-sky-800/70">
                       {activeMoveStatusText}
                     </div>
                   ) : null}
 
-                  <div className="inline-flex rounded-2xl bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+                  <div className="inline-flex rounded-2xl bg-slate-100/90 p-1 ring-1 ring-slate-200/80 backdrop-blur-sm dark:bg-zinc-900 dark:ring-zinc-800">
                     {(Object.entries(TIMELINE_ZOOM_OPTIONS) as Array<
                       [TimelineZoomMode, (typeof TIMELINE_ZOOM_OPTIONS)[TimelineZoomMode]]
                     >).map(([mode, option]) => (
@@ -2673,7 +2673,7 @@ export function DashboardPage({
                         className={[
                           "rounded-xl px-2.5 py-1.5 text-[11px] font-medium transition",
                           zoomMode === mode
-                            ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
+                            ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-none"
                             : "text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200",
                         ].join(" ")}
                       >
@@ -2682,7 +2682,7 @@ export function DashboardPage({
                     ))}
                   </div>
 
-                  <div className="inline-flex rounded-2xl bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
+                  <div className="inline-flex rounded-2xl bg-slate-100/90 p-1 ring-1 ring-slate-200/80 backdrop-blur-sm dark:bg-zinc-900 dark:ring-zinc-800">
                     {(Object.entries(TIMELINE_DENSITY_OPTIONS) as Array<
                       [
                         TimelineDensityMode,
@@ -2696,7 +2696,7 @@ export function DashboardPage({
                         className={[
                           "rounded-xl px-2.5 py-1.5 text-[11px] font-medium transition",
                           densityMode === mode
-                            ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
+                            ? "bg-white text-slate-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-none"
                             : "text-slate-500 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-zinc-200",
                         ].join(" ")}
                       >
@@ -2724,7 +2724,7 @@ export function DashboardPage({
                         }
                       });
                     }}
-                    className="rounded-2xl bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 shadow-sm transition hover:bg-slate-50 dark:bg-zinc-950 dark:text-zinc-300 dark:ring-zinc-800 dark:hover:bg-zinc-900"
+                    className="rounded-2xl bg-white/90 px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200/80 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.18)] backdrop-blur-sm transition hover:bg-white dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800 dark:hover:bg-zinc-800"
                   >
                     Jump to today
                   </button>
@@ -2734,7 +2734,7 @@ export function DashboardPage({
               <div
                 ref={scrollRef}
                 onScroll={handleTimelineScroll}
-                className="flex-1 overflow-auto overscroll-contain rounded-b-[30px]"
+                className="flex-1 overflow-auto overscroll-contain rounded-b-[30px] bg-white dark:bg-zinc-950"
               >
                 <div
                   style={{
@@ -2766,7 +2766,7 @@ export function DashboardPage({
                     className="relative"
                     style={{ height: totalRowsHeight }}
                   >
-                    {visibleRows.map((row) => (
+                    {visibleRows.map((row, index) => (
                       <div
                         key={row.user.id}
                         className="absolute left-0 right-0"
@@ -2774,6 +2774,7 @@ export function DashboardPage({
                       >
                         <UserRowLine
                           u={row.user}
+                          rowIndex={visibleRowRange.start + index}
                           days={days}
                           dayWidth={dayWidth}
                           leftWidth={leftWidth}

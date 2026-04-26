@@ -139,7 +139,7 @@ export function TimelineHeader({
         : `${days[0].getFullYear()} / ${days[days.length - 1].getFullYear()}`;
 
   return (
-    <div className="relative sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
+    <div className="relative sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-zinc-800/40 dark:bg-zinc-950 dark:shadow-[0_8px_24px_-22px_rgba(0,0,0,0.68)]">
       {todayIndex !== null ? (
         <div
           className="pointer-events-none absolute bottom-0 top-0 z-40"
@@ -147,26 +147,27 @@ export function TimelineHeader({
             left: leftWidth + todayIndex * dayWidth + Math.floor(dayWidth / 2),
           }}
         >
-          <div className="absolute -top-1.5 -left-1.5 h-3 w-3 rounded-full border border-white bg-sky-500 shadow-sm shadow-sky-500/30 dark:border-zinc-950" />
-          <div className="h-full w-px bg-sky-400/70" />
+          <div className="absolute -top-1.5 -left-[5px] h-3.5 w-3.5 rounded-full border border-white/80 bg-sky-500 shadow-[0_0_0_4px_rgba(15,23,42,0.04)] dark:border-zinc-950/90 dark:shadow-[0_0_0_4px_rgba(56,189,248,0.16)]" />
+          <div className="absolute inset-y-0 -left-px w-[3px] bg-sky-400/12 blur-[2px]" />
+          <div className="h-full w-px bg-sky-500/75 dark:bg-sky-400/80" />
         </div>
       ) : null}
 
       <div
-        className="grid border-b border-slate-200/70 dark:border-zinc-800"
+        className="grid border-b border-slate-200/75 dark:border-zinc-800/40"
         style={{ gridTemplateColumns: `${leftWidth}px 1fr` }}
       >
-        <div className="sticky left-0 z-30 border-r border-slate-200/70 bg-white/95 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/95">
-          <div className="text-sm font-semibold tracking-[0.18em] text-slate-800 dark:text-zinc-200">
+        <div className="sticky left-0 z-30 border-r border-slate-200/85 bg-white/95 px-3 py-2 shadow-[12px_0_24px_-24px_rgba(15,23,42,0.2)] backdrop-blur-xl dark:border-zinc-800/40 dark:bg-zinc-950 dark:shadow-[12px_0_24px_-24px_rgba(0,0,0,0.72)]">
+          <div className="text-sm font-semibold tracking-[0.18em] text-slate-800/95 dark:text-zinc-200">
             {yearLabel}
           </div>
         </div>
 
-        <div className="flex">
+        <div className="flex bg-white dark:bg-zinc-950">
           {monthGroups.map((group) => (
             <div
               key={`${group.label}-${group.start}`}
-              className="border-l border-slate-200/70 px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500 dark:border-zinc-800 dark:text-zinc-400"
+              className="border-l border-slate-200/70 px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500/90 dark:border-zinc-800/40 dark:text-zinc-400"
               style={{ width: group.span * dayWidth }}
             >
               {group.label}
@@ -176,22 +177,22 @@ export function TimelineHeader({
       </div>
 
       <div
-        className="grid border-b border-slate-200/70 dark:border-zinc-800"
+        className="grid border-b border-slate-200/75 dark:border-zinc-800/40"
         style={{ gridTemplateColumns: `${leftWidth}px 1fr` }}
       >
-        <div className="sticky left-0 z-30 border-r border-slate-200/70 bg-white/95 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/95" />
+        <div className="sticky left-0 z-30 border-r border-slate-200/85 bg-white/95 px-3 py-1.5 shadow-[12px_0_24px_-24px_rgba(15,23,42,0.2)] backdrop-blur-xl dark:border-zinc-800/40 dark:bg-zinc-950 dark:shadow-[12px_0_24px_-24px_rgba(0,0,0,0.72)]" />
 
-        <div className="flex bg-slate-50/75 dark:bg-zinc-950">
+        <div className="flex bg-slate-50/88 dark:bg-zinc-950">
           {weekGroups.map((group) => (
             <div
               key={`${group.label}-${group.start}`}
-              className="border-l border-slate-200/70 px-2 py-1.5 text-[10px] dark:border-zinc-800"
+              className="border-l border-slate-200/70 px-2 py-1.5 text-[10px] dark:border-zinc-800/40"
               style={{ width: group.span * dayWidth }}
             >
-              <div className="font-semibold uppercase tracking-[0.14em] text-slate-600 dark:text-zinc-300">
+              <div className="font-semibold uppercase tracking-[0.14em] text-slate-600/95 dark:text-zinc-300">
                 W{String(group.weekNumber).padStart(2, "0")}
               </div>
-              <div className="mt-0.5 whitespace-nowrap text-[10px] text-slate-500 dark:text-zinc-500">
+              <div className="mt-0.5 whitespace-nowrap text-[10px] text-slate-500/90 dark:text-zinc-500">
                 {group.label}
               </div>
             </div>
@@ -200,7 +201,7 @@ export function TimelineHeader({
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: `${leftWidth}px 1fr` }}>
-        <div className="sticky left-0 z-30 border-r border-slate-200/70 bg-white/95 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/95" />
+        <div className="sticky left-0 z-30 border-r border-slate-200/85 bg-white/95 px-3 py-1.5 shadow-[12px_0_24px_-24px_rgba(15,23,42,0.2)] backdrop-blur-xl dark:border-zinc-800/40 dark:bg-zinc-950 dark:shadow-[12px_0_24px_-24px_rgba(0,0,0,0.72)]" />
 
         <div
           className="grid"
@@ -217,13 +218,15 @@ export function TimelineHeader({
               <div
                 key={index}
                 className={[
-                  "border-l px-1 py-1.5 text-center text-[10px] dark:border-zinc-800",
+                  "border-l border-slate-200/70 px-1 py-1.5 text-center text-[10px] dark:border-zinc-800/40",
                   holiday
-                    ? "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-200"
+                    ? "bg-amber-50/50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-200"
                     : weekend
-                      ? "bg-slate-100/80 text-slate-400 dark:bg-zinc-900 dark:text-zinc-500"
+                      ? "bg-slate-50 text-slate-400 dark:bg-zinc-900/45 dark:text-zinc-500"
                       : "bg-white text-slate-500 dark:bg-zinc-950 dark:text-zinc-400",
-                  isToday ? "bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-200" : "",
+                  isToday
+                    ? "bg-slate-900/[0.05] text-slate-700 dark:bg-sky-950/25 dark:text-sky-200"
+                    : "",
                 ].join(" ")}
               >
                 <div className="font-semibold uppercase tracking-[0.08em]">
