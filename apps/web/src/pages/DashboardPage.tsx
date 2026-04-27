@@ -1308,9 +1308,11 @@ export function DashboardPage({
         showNewProject;
 
       if (event.key === "Escape") {
-        if (rowResize) {
+        const activeRowResize = rowResize;
+
+        if (activeRowResize) {
           event.preventDefault();
-          cancelRowResize(rowResize);
+          cancelRowResize(activeRowResize);
           return;
         }
 
@@ -1394,11 +1396,12 @@ export function DashboardPage({
       return;
     }
 
-    rowResizePointerYRef.current = rowResize.originClientY;
+    const activeRowResize = rowResize;
+    rowResizePointerYRef.current = activeRowResize.originClientY;
 
     function handleMouseMove(event: MouseEvent) {
       rowResizePointerYRef.current = event.clientY;
-      applyRowResizeHeight(rowResize, event.clientY);
+      applyRowResizeHeight(activeRowResize, event.clientY);
     }
 
     function tickAutoScroll() {
@@ -1441,7 +1444,7 @@ export function DashboardPage({
           }
         }
 
-        applyRowResizeHeight(rowResize, pointerY);
+        applyRowResizeHeight(activeRowResize, pointerY);
       }
 
       rowResizeAnimationFrameRef.current = window.requestAnimationFrame(
@@ -1456,19 +1459,19 @@ export function DashboardPage({
       }
       rowResizePointerYRef.current = null;
 
-      if (rowResize.previousCustomHeight === null) {
+      if (activeRowResize.previousCustomHeight === null) {
         setCustomRowHeightsByUserId((previous) => {
-          const nextHeight = previous[rowResize.userId];
+          const nextHeight = previous[activeRowResize.userId];
 
           if (
             typeof nextHeight !== "number" ||
-            nextHeight > rowResize.minHeight
+            nextHeight > activeRowResize.minHeight
           ) {
             return previous;
           }
 
           const next = { ...previous };
-          delete next[rowResize.userId];
+          delete next[activeRowResize.userId];
           return next;
         });
       }
@@ -3038,7 +3041,7 @@ export function DashboardPage({
                       </div>
                     ))}
 
-                    {visibleRows.map((row, index) => {
+                    {visibleRows.map((row) => {
                       const isActive = rowResize?.userId === row.user.id;
 
                       return (
