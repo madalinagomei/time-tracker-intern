@@ -76,7 +76,7 @@ import { UserRowLine } from "../components/UserRowLine";
 
 const DRAFT_PROJECT_ID = "__draft__project";
 const DRAFT_ASSIGNMENT_ID = "__draft__assignment";
-const MAX_MANUAL_ROW_HEIGHT = 500;
+const MAX_MANUAL_ROW_HEIGHT = 900;
 const DUPLICATE_PREVIEW_ASSIGNMENT_ID = "__duplicate__assignment";
 const DEFAULT_NEW_PROJECT_COLOR_KEY = "haematology";
 
@@ -202,6 +202,7 @@ type InteractionState =
 type RowResizeState = {
   userId: string;
   originClientY: number;
+  originScrollTop: number;
   minHeight: number;
   startHeight: number;
   previousCustomHeight: number | null;
@@ -1210,6 +1211,8 @@ export function DashboardPage({
   >({});
   const draftAssignmentRef = useRef<DraftAssignment | null>(null);
   const assignmentPreviewRef = useRef<AssignmentPreview | null>(null);
+  const rowResizePointerYRef = useRef<number | null>(null);
+  const rowResizeAnimationFrameRef = useRef<number | null>(null);
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(720);
@@ -1220,6 +1223,11 @@ export function DashboardPage({
   const leftWidth = LEFT_COLUMN_WIDTH;
   const dayWidth = getTimelineDayWidth(zoomMode, timelineViewportWidth, leftWidth);
   const dayWidthRef = useRef(dayWidth);
+  const scrollTopRef = useRef(scrollTop);
+
+  useEffect(() => {
+    scrollTopRef.current = scrollTop;
+  }, [scrollTop]);
 
   function setDraftAssignmentState(nextDraft: DraftAssignment | null) {
     draftAssignmentRef.current = nextDraft;
@@ -1229,6 +1237,29 @@ export function DashboardPage({
   function setAssignmentPreviewState(nextPreview: AssignmentPreview | null) {
     assignmentPreviewRef.current = nextPreview;
     setAssignmentPreview(nextPreview);
+  }
+
+  function applyRowResizeHeight(activeResize: RowResizeState, clientY: number) {
+    const currentScrollTop = scrollRef.current?.scrollTop ?? scrollTopRef.current;
+    const deltaY =
+      (clientY - activeResize.originClientY) +
+      (currentScrollTop - activeResize.originScrollTop);
+    const nextHeight = clamp(
+      activeResize.startHeight + deltaY,
+      activeResize.minHeight,
+      MAX_MANUAL_ROW_HEIGHT,
+    );
+
+    setCustomRowHeightsByUserId((previous) => {
+      if (previous[activeResize.userId] === nextHeight) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        [activeResize.userId]: nextHeight,
+      };
+    });
   }
 
   function clearInlinePlacementState() {
@@ -1363,27 +1394,68 @@ export function DashboardPage({
       return;
     }
 
-    function handleMouseMove(event: MouseEvent) {
-      const deltaY = event.clientY - rowResize.originClientY;
-      const nextHeight = clamp(
-        rowResize.startHeight + deltaY,
-        rowResize.minHeight,
-        MAX_MANUAL_ROW_HEIGHT,
-      );
+    rowResizePointerYRef.current = rowResize.originClientY;
 
-      setCustomRowHeightsByUserId((previous) => {
-        if (previous[rowResize.userId] === nextHeight) {
-          return previous;
+    function handleMouseMove(event: MouseEvent) {
+      rowResizePointerYRef.current = event.clientY;
+      applyRowResizeHeight(rowResize, event.clientY);
+    }
+
+    function tickAutoScroll() {
+      const viewport = scrollRef.current;
+      const pointerY = rowResizePointerYRef.current;
+
+      if (viewport && pointerY !== null) {
+        const rect = viewport.getBoundingClientRect();
+        const edgeThreshold = 64;
+        const maxStep = 18;
+        let scrollDelta = 0;
+
+        if (pointerY > rect.bottom - edgeThreshold) {
+          const intensity = Math.min(
+            1,
+            (pointerY - (rect.bottom - edgeThreshold)) / edgeThreshold,
+          );
+          scrollDelta = Math.ceil(maxStep * intensity);
+        } else if (pointerY < rect.top + edgeThreshold) {
+          const intensity = Math.min(
+            1,
+            ((rect.top + edgeThreshold) - pointerY) / edgeThreshold,
+          );
+          scrollDelta = -Math.ceil(maxStep * intensity);
         }
 
-        return {
-          ...previous,
-          [rowResize.userId]: nextHeight,
-        };
-      });
+        if (scrollDelta !== 0) {
+          const maxScrollTop = Math.max(
+            0,
+            viewport.scrollHeight - viewport.clientHeight,
+          );
+          const nextScrollTop = clamp(
+            viewport.scrollTop + scrollDelta,
+            0,
+            maxScrollTop,
+          );
+
+          if (nextScrollTop !== viewport.scrollTop) {
+            viewport.scrollTop = nextScrollTop;
+          }
+        }
+
+        applyRowResizeHeight(rowResize, pointerY);
+      }
+
+      rowResizeAnimationFrameRef.current = window.requestAnimationFrame(
+        tickAutoScroll,
+      );
     }
 
     function handleMouseUp() {
+      if (rowResizeAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(rowResizeAnimationFrameRef.current);
+        rowResizeAnimationFrameRef.current = null;
+      }
+      rowResizePointerYRef.current = null;
+
       if (rowResize.previousCustomHeight === null) {
         setCustomRowHeightsByUserId((previous) => {
           const nextHeight = previous[rowResize.userId];
@@ -1406,10 +1478,18 @@ export function DashboardPage({
 
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
+    rowResizeAnimationFrameRef.current = window.requestAnimationFrame(
+      tickAutoScroll,
+    );
 
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (rowResizeAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(rowResizeAnimationFrameRef.current);
+        rowResizeAnimationFrameRef.current = null;
+      }
+      rowResizePointerYRef.current = null;
     };
   }, [rowResize]);
 
@@ -1954,8 +2034,11 @@ export function DashboardPage({
       : 0;
   const lastRowUserId =
     rowMetrics.length > 0 ? rowMetrics[rowMetrics.length - 1].user.id : null;
-  const bottomResizePadding =
-    rowResize && rowResize.userId === lastRowUserId ? 320 : 120;
+  const bottomResizePadding = rowResize
+    ? rowResize.userId === lastRowUserId
+      ? 420
+      : 360
+    : 120;
   const rowMetricsRef = useRef(rowMetrics);
   const totalRowsHeightRef = useRef(totalRowsHeight);
 
@@ -2247,6 +2330,7 @@ export function DashboardPage({
     setRowResize({
       userId,
       originClientY,
+      originScrollTop: scrollRef.current?.scrollTop ?? scrollTopRef.current,
       minHeight,
       startHeight,
       previousCustomHeight:
