@@ -76,6 +76,7 @@ import { UserRowLine } from "../components/UserRowLine";
 
 const DRAFT_PROJECT_ID = "__draft__project";
 const DRAFT_ASSIGNMENT_ID = "__draft__assignment";
+const MAX_MANUAL_ROW_HEIGHT = 500;
 const DUPLICATE_PREVIEW_ASSIGNMENT_ID = "__duplicate__assignment";
 const DEFAULT_NEW_PROJECT_COLOR_KEY = "haematology";
 
@@ -197,6 +198,14 @@ type InteractionState =
       originalEndDate: string;
       projectId: string;
     };
+
+type RowResizeState = {
+  userId: string;
+  originClientY: number;
+  minHeight: number;
+  startHeight: number;
+  previousCustomHeight: number | null;
+};
 
 function getFloatingPanelLayout(anchorRect: DOMRect, preferredWidth = 420) {
   const viewportWidth = window.innerWidth;
@@ -1180,6 +1189,10 @@ export function DashboardPage({
     null,
   );
   const [interaction, setInteraction] = useState<InteractionState | null>(null);
+  const [rowResize, setRowResize] = useState<RowResizeState | null>(null);
+  const [customRowHeightsByUserId, setCustomRowHeightsByUserId] = useState<
+    Record<string, number>
+  >({});
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const [timelineStart, setTimelineStart] = useState(() =>
@@ -1226,6 +1239,26 @@ export function DashboardPage({
     setInteraction(null);
   }
 
+  function cancelRowResize(activeResize: RowResizeState) {
+    setCustomRowHeightsByUserId((previous) => {
+      if (activeResize.previousCustomHeight === null) {
+        if (!(activeResize.userId in previous)) {
+          return previous;
+        }
+
+        const next = { ...previous };
+        delete next[activeResize.userId];
+        return next;
+      }
+
+      return {
+        ...previous,
+        [activeResize.userId]: activeResize.previousCustomHeight,
+      };
+    });
+    setRowResize(null);
+  }
+
   useEffect(() => {
     function handleWindowKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
@@ -1235,6 +1268,7 @@ export function DashboardPage({
         target instanceof HTMLSelectElement ||
         Boolean(target?.isContentEditable);
       const hasTransientUi =
+        Boolean(rowResize) ||
         Boolean(interaction) ||
         Boolean(draftAssignmentRef.current) ||
         Boolean(assignmentPreviewRef.current) ||
@@ -1243,6 +1277,12 @@ export function DashboardPage({
         showNewProject;
 
       if (event.key === "Escape") {
+        if (rowResize) {
+          event.preventDefault();
+          cancelRowResize(rowResize);
+          return;
+        }
+
         if (!hasTransientUi || (isEditableTarget && !pendingComposer && !showNewProject)) {
           if (!isEditableTarget && selectedAssignmentId) {
             event.preventDefault();
@@ -1275,12 +1315,13 @@ export function DashboardPage({
     interaction,
     pendingComposer,
     placementProjectId,
+    rowResize,
     selectedAssignmentId,
     showNewProject,
   ]);
 
   useEffect(() => {
-    if (!interaction) {
+    if (!interaction && !rowResize) {
       return;
     }
 
@@ -1289,9 +1330,11 @@ export function DashboardPage({
 
     document.body.style.userSelect = "none";
     document.body.style.cursor =
-      interaction.mode === "resize"
+      rowResize
+        ? "ns-resize"
+        : interaction?.mode === "resize"
         ? "ew-resize"
-        : interaction.mode === "move"
+        : interaction?.mode === "move"
           ? interaction.duplicate
             ? "copy"
             : "grabbing"
@@ -1301,7 +1344,7 @@ export function DashboardPage({
       document.body.style.userSelect = previousUserSelect;
       document.body.style.cursor = previousCursor;
     };
-  }, [interaction]);
+  }, [interaction, rowResize]);
 
   useEffect(() => {
     if (!toast) {
@@ -1314,6 +1357,61 @@ export function DashboardPage({
 
     return () => window.clearTimeout(timeoutId);
   }, [toast]);
+
+  useEffect(() => {
+    if (!rowResize) {
+      return;
+    }
+
+    function handleMouseMove(event: MouseEvent) {
+      const deltaY = event.clientY - rowResize.originClientY;
+      const nextHeight = clamp(
+        rowResize.startHeight + deltaY,
+        rowResize.minHeight,
+        MAX_MANUAL_ROW_HEIGHT,
+      );
+
+      setCustomRowHeightsByUserId((previous) => {
+        if (previous[rowResize.userId] === nextHeight) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          [rowResize.userId]: nextHeight,
+        };
+      });
+    }
+
+    function handleMouseUp() {
+      if (rowResize.previousCustomHeight === null) {
+        setCustomRowHeightsByUserId((previous) => {
+          const nextHeight = previous[rowResize.userId];
+
+          if (
+            typeof nextHeight !== "number" ||
+            nextHeight > rowResize.minHeight
+          ) {
+            return previous;
+          }
+
+          const next = { ...previous };
+          delete next[rowResize.userId];
+          return next;
+        });
+      }
+
+      setRowResize(null);
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [rowResize]);
 
   function toggleTheme() {
     const nextTheme: Theme = theme === "dark" ? "light" : "dark";
@@ -1820,17 +1918,24 @@ export function DashboardPage({
           minRowHeight: densityConfig.minRowHeight,
         },
       );
+      const autoHeight = layout.rowHeight;
+      const height = Math.max(
+        autoHeight,
+        customRowHeightsByUserId[user.id] ?? 0,
+      );
       const row = {
         user,
         layout,
         top,
-        height: layout.rowHeight,
+        autoHeight,
+        height,
       };
-      top += layout.rowHeight;
+      top += height;
       return row;
     });
   }, [
     assignmentsByUser,
+    customRowHeightsByUserId,
     days,
     filteredUsers,
     freezePreferredLanes,
@@ -1847,6 +1952,10 @@ export function DashboardPage({
       ? rowMetrics[rowMetrics.length - 1].top +
         rowMetrics[rowMetrics.length - 1].height
       : 0;
+  const lastRowUserId =
+    rowMetrics.length > 0 ? rowMetrics[rowMetrics.length - 1].user.id : null;
+  const bottomResizePadding =
+    rowResize && rowResize.userId === lastRowUserId ? 320 : 120;
   const rowMetricsRef = useRef(rowMetrics);
   const totalRowsHeightRef = useRef(totalRowsHeight);
 
@@ -2118,6 +2227,30 @@ export function DashboardPage({
       originalUserId: userId,
       originalLaneIndex: laneIndex,
       projectId: assignment.projectId,
+    });
+  }
+
+  function handleRowResizeStart(
+    userId: string,
+    minHeight: number,
+    startHeight: number,
+    originClientY: number,
+  ) {
+    if (interaction) {
+      return;
+    }
+
+    const previousCustomHeight = customRowHeightsByUserId[userId];
+
+    setPendingComposer(null);
+    setSelectedAssignmentId(null);
+    setRowResize({
+      userId,
+      originClientY,
+      minHeight,
+      startHeight,
+      previousCustomHeight:
+        typeof previousCustomHeight === "number" ? previousCustomHeight : null,
     });
   }
 
@@ -2764,7 +2897,7 @@ export function DashboardPage({
                   <div
                     ref={rowsContainerRef}
                     className="relative"
-                    style={{ height: totalRowsHeight }}
+                    style={{ height: totalRowsHeight + bottomResizePadding }}
                   >
                     {visibleRows.map((row, index) => (
                       <div
@@ -2775,6 +2908,7 @@ export function DashboardPage({
                         <UserRowLine
                           u={row.user}
                           rowIndex={visibleRowRange.start + index}
+                          rowHeight={row.height}
                           days={days}
                           dayWidth={dayWidth}
                           leftWidth={leftWidth}
@@ -2819,6 +2953,58 @@ export function DashboardPage({
                         />
                       </div>
                     ))}
+
+                    {visibleRows.map((row, index) => {
+                      const isActive = rowResize?.userId === row.user.id;
+
+                      return (
+                        <button
+                          key={`${row.user.id}-resize-handle`}
+                          type="button"
+                          onMouseDown={(event) => {
+                            if (event.button !== 0) {
+                              return;
+                            }
+
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleRowResizeStart(
+                              row.user.id,
+                              row.autoHeight,
+                              row.height,
+                              event.clientY,
+                            );
+                          }}
+                          className="group absolute left-0 right-0 z-20 cursor-ns-resize"
+                          style={{
+                            top: row.top + row.height - 4,
+                            height: 8,
+                          }}
+                          aria-label={`Resize ${row.user.displayName} row height`}
+                        >
+                          <div
+                            className={[
+                              "pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-all duration-150",
+                              isActive
+                                ? "bg-sky-400/70 shadow-[0_0_0_1px_rgba(56,189,248,0.12)] dark:bg-sky-400/75"
+                                : "bg-slate-300/0 group-hover:bg-slate-300/85 dark:bg-zinc-700/0 dark:group-hover:bg-zinc-700/90",
+                            ].join(" ")}
+                          />
+                          <div
+                            className={[
+                              "pointer-events-none absolute left-1/2 top-1/2 h-3 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full border transition-all duration-150",
+                              isActive
+                                ? "border-sky-300/75 bg-sky-100/80 shadow-sm dark:border-sky-700/70 dark:bg-sky-950/75"
+                                : "border-slate-200/0 bg-white/0 group-hover:border-slate-200/90 group-hover:bg-white/92 dark:border-zinc-700/0 dark:bg-zinc-950/0 dark:group-hover:border-zinc-700/85 dark:group-hover:bg-zinc-950/92",
+                            ].join(" ")}
+                            aria-hidden="true"
+                          >
+                            <div className="absolute inset-x-3 top-1/2 h-px -translate-y-[3px] bg-current opacity-35" />
+                            <div className="absolute inset-x-3 top-1/2 h-px translate-y-[3px] bg-current opacity-35" />
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

@@ -14,6 +14,7 @@ import {
 type Props = {
   u: UserRow;
   rowIndex: number;
+  rowHeight: number;
   days: Date[];
   dayWidth: number;
   leftWidth: number;
@@ -211,6 +212,7 @@ function getGhostPosition(days: Date[], startDate: string, endDate: string) {
 export function UserRowLine({
   u,
   rowIndex,
+  rowHeight,
   days,
   dayWidth,
   leftWidth,
@@ -262,7 +264,7 @@ export function UserRowLine({
       ? null
       : Math.min(
           Math.max(rowPaddingY - 2, rowPaddingY + targetLaneIndex * laneHeight - 2),
-          Math.max(rowPaddingY - 2, layout.rowHeight - 6),
+          Math.max(rowPaddingY - 2, rowHeight - 6),
         );
 
   useEffect(() => {
@@ -367,7 +369,7 @@ export function UserRowLine({
         className="relative grid overflow-hidden"
         style={{
           gridTemplateColumns: `repeat(${days.length}, ${dayWidth}px)`,
-          height: layout.rowHeight,
+          height: rowHeight,
         }}
       >
         {days.map((day, index) => {
