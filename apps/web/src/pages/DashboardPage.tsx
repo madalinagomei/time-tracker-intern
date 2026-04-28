@@ -1977,10 +1977,45 @@ export function DashboardPage({
     return map;
   }, [assignmentsByUser, committedStableLaneMapByUser]);
 
+  const forceLaneByUser = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+
+    if (interaction?.mode !== "move") {
+      return map;
+    }
+
+    if (interaction.duplicate) {
+      const preview = duplicatePreviewAssignment;
+
+      if (
+        preview?.userId &&
+        typeof preview.laneIndex === "number"
+      ) {
+        map[preview.userId] = {
+          [preview.id]: Math.max(0, preview.laneIndex),
+        };
+      }
+
+      return map;
+    }
+
+    const previewUserId = assignmentPreview?.userId ?? interaction.originalUserId;
+    const previewLaneIndex =
+      assignmentPreview?.laneIndex ?? interaction.originalLaneIndex;
+
+    map[previewUserId] = {
+      [interaction.assignmentId]: Math.max(0, previewLaneIndex),
+    };
+
+    return map;
+  }, [assignmentPreview, duplicatePreviewAssignment, interaction]);
+
   const lockedAssignmentId =
     interaction?.mode === "create"
       ? DRAFT_ASSIGNMENT_ID
-      : assignmentPreview?.assignmentId ?? null;
+      : interaction?.mode === "move" && interaction.duplicate
+        ? DUPLICATE_PREVIEW_ASSIGNMENT_ID
+        : assignmentPreview?.assignmentId ?? null;
   const freezePreferredLanes =
     interaction?.mode === "move" || interaction?.mode === "resize";
 
@@ -1994,6 +2029,7 @@ export function DashboardPage({
         days,
         {
           preferredLaneByAssignmentId: preferredLaneByUser[user.id],
+          forceLaneByAssignmentId: forceLaneByUser[user.id],
           lockedAssignmentId,
           freezePreferredLanes,
           laneHeight: densityConfig.laneHeight,
@@ -2026,6 +2062,7 @@ export function DashboardPage({
     densityConfig.laneHeight,
     densityConfig.minRowHeight,
     densityConfig.rowPaddingY,
+    forceLaneByUser,
     projectsById,
     preferredLaneByUser,
   ]);
@@ -2149,6 +2186,66 @@ export function DashboardPage({
         Math.min(targetRow.layout.laneCount, rawLaneIndex),
       ),
     };
+  }
+
+  function rangesOverlap(
+    startDate: string,
+    endDate: string,
+    otherStartDate: string,
+    otherEndDate: string,
+  ) {
+    return (
+      new Date(startDate).getTime() < new Date(otherEndDate).getTime() &&
+      new Date(endDate).getTime() > new Date(otherStartDate).getTime()
+    );
+  }
+
+  function resolveMoveLaneDownward(
+    userId: string,
+    assignmentId: string,
+    desiredLaneIndex: number,
+    startDate: string,
+    endDate: string,
+    duplicate: boolean,
+  ) {
+    const targetRow = rowMetricsRef.current.find((row) => row.user.id === userId);
+
+    if (!targetRow) {
+      return Math.max(0, desiredLaneIndex);
+    }
+
+    let candidateLane = Math.max(0, desiredLaneIndex);
+
+    while (true) {
+      const laneAssignments = targetRow.layout.lanes[candidateLane];
+
+      if (!laneAssignments || laneAssignments.length === 0) {
+        return candidateLane;
+      }
+
+      const hasCollision = laneAssignments.some((item) => {
+        if (
+          (!duplicate && item.assignment.id === assignmentId) ||
+          (duplicate &&
+            item.assignment.id === DUPLICATE_PREVIEW_ASSIGNMENT_ID)
+        ) {
+          return false;
+        }
+
+        return rangesOverlap(
+          startDate,
+          endDate,
+          item.assignment.startDate,
+          item.assignment.endDate,
+        );
+      });
+
+      if (!hasCollision) {
+        return candidateLane;
+      }
+
+      candidateLane += 1;
+    }
   }
 
   const drawerAssignments = useMemo(() => {
@@ -2585,6 +2682,12 @@ export function DashboardPage({
       }
 
       if (activeInteraction.mode === "move") {
+        const nextPreview = buildMovePreview(
+          activeInteraction.assignmentId,
+          activeInteraction.originalStartDate,
+          activeInteraction.originalEndDate,
+          calendarDelta,
+        );
         const moveTarget = activeInteraction.horizontalLock
           ? {
               userId: activeInteraction.originalUserId,
@@ -2595,17 +2698,22 @@ export function DashboardPage({
               activeInteraction.originalUserId,
               activeInteraction.originalLaneIndex,
             );
+        const resolvedLaneIndex = activeInteraction.horizontalLock
+          ? activeInteraction.originalLaneIndex
+          : resolveMoveLaneDownward(
+              moveTarget.userId,
+              activeInteraction.assignmentId,
+              moveTarget.laneIndex,
+              nextPreview.startDate,
+              nextPreview.endDate,
+              activeInteraction.duplicate,
+            );
 
         setAssignmentPreviewState(
           {
-            ...buildMovePreview(
-              activeInteraction.assignmentId,
-              activeInteraction.originalStartDate,
-              activeInteraction.originalEndDate,
-              calendarDelta,
-            ),
+            ...nextPreview,
             userId: moveTarget.userId,
-            laneIndex: moveTarget.laneIndex,
+            laneIndex: resolvedLaneIndex,
           },
         );
         return;

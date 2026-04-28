@@ -61,17 +61,17 @@ export const TIMELINE_DENSITY_OPTIONS: Record<
 > = {
   comfortable: {
     label: "Comfortable",
-    laneHeight: LANE_HEIGHT,
-    rowPaddingY: ROW_PADDING_Y,
-    barHeight: 32,
-    minRowHeight: MIN_ROW_HEIGHT,
+    laneHeight: 54,
+    rowPaddingY: 10,
+    barHeight: 46,
+    minRowHeight: 74,
   },
   compact: {
     label: "Compact",
-    laneHeight: 30,
+    laneHeight: 42,
     rowPaddingY: 8,
-    barHeight: 26,
-    minRowHeight: 54,
+    barHeight: 34,
+    minRowHeight: 58,
   },
 };
 
@@ -443,6 +443,27 @@ export function buildStableLaneMap<T extends TimelineAssignmentLike>(
   const lanes: Array<{ endTime: number }> = [];
   const map: Record<string, number> = {};
 
+  function getDownwardLaneOrder(
+    preferredLane: number | undefined,
+    laneCount: number,
+  ) {
+    if (
+      preferredLane !== undefined &&
+      preferredLane >= 0 &&
+      preferredLane <= laneCount
+    ) {
+      const order = [preferredLane];
+
+      for (let laneIndex = preferredLane + 1; laneIndex < laneCount; laneIndex += 1) {
+        order.push(laneIndex);
+      }
+
+      return order;
+    }
+
+    return Array.from({ length: laneCount }, (_, laneIndex) => laneIndex);
+  }
+
   const sortedAssignments = [...assignments].sort((left, right) => {
     const startDiff =
       new Date(left.startDate).getTime() - new Date(right.startDate).getTime();
@@ -465,17 +486,7 @@ export function buildStableLaneMap<T extends TimelineAssignmentLike>(
     const startTime = new Date(assignment.startDate).getTime();
     const endTime = new Date(assignment.endDate).getTime();
     const preferredLane = previousLaneByAssignmentId?.[assignment.id];
-    const laneOrder: number[] = [];
-
-    if (preferredLane !== undefined && preferredLane <= lanes.length) {
-      laneOrder.push(preferredLane);
-    }
-
-    for (let laneIndex = 0; laneIndex < lanes.length; laneIndex += 1) {
-      if (laneIndex !== preferredLane) {
-        laneOrder.push(laneIndex);
-      }
-    }
+    const laneOrder = getDownwardLaneOrder(preferredLane, lanes.length);
 
     let laneIndex = laneOrder.find(
       (candidateLane) => startTime >= (lanes[candidateLane]?.endTime ?? 0),
@@ -738,6 +749,7 @@ export function buildUserRowLayout<T extends TimelineAssignmentLike>(
   days: Date[],
   options?: {
     preferredLaneByAssignmentId?: Record<string, number>;
+    forceLaneByAssignmentId?: Record<string, number>;
     lockedAssignmentId?: string | null;
     freezePreferredLanes?: boolean;
     laneHeight?: number;
@@ -818,9 +830,28 @@ export function buildUserRowLayout<T extends TimelineAssignmentLike>(
 
   const lanes: PositionedAssignment<T>[][] = [];
 
+  function getDownwardLaneOrder(
+    preferredLane: number | null,
+    laneCount: number,
+  ) {
+    if (preferredLane !== null && preferredLane >= 0 && preferredLane <= laneCount) {
+      const order = [preferredLane];
+
+      for (let laneIndex = preferredLane + 1; laneIndex < laneCount; laneIndex += 1) {
+        order.push(laneIndex);
+      }
+
+      return order;
+    }
+
+    return Array.from({ length: laneCount }, (_, laneIndex) => laneIndex);
+  }
+
   for (const item of visibleAssignments) {
     const preferredLane =
       options?.preferredLaneByAssignmentId?.[item.assignment.id] ?? null;
+    const forcedLane =
+      options?.forceLaneByAssignmentId?.[item.assignment.id] ?? null;
 
     function canPlaceInLane(laneIndex: number) {
       const lane = lanes[laneIndex];
@@ -836,20 +867,12 @@ export function buildUserRowLayout<T extends TimelineAssignmentLike>(
       );
     }
 
-    const laneOrder: number[] = [];
-
-    if (preferredLane !== null && preferredLane <= lanes.length) {
-      laneOrder.push(preferredLane);
-    }
-
-    for (let laneIndex = 0; laneIndex < lanes.length; laneIndex += 1) {
-      if (laneIndex !== preferredLane) {
-        laneOrder.push(laneIndex);
-      }
-    }
+    const laneOrder = getDownwardLaneOrder(preferredLane, lanes.length);
 
     let targetLane =
-      options?.freezePreferredLanes &&
+      forcedLane !== null && forcedLane >= 0
+        ? forcedLane
+        : options?.freezePreferredLanes &&
         preferredLane !== null &&
         preferredLane <= lanes.length
         ? preferredLane
