@@ -18,9 +18,11 @@ import type {
   UserRow,
 } from "../api";
 import {
+  getColorKeyForDepartment,
   LEAVE_COLOR_OPTIONS,
   getColorOption,
   getLeaveTypeFromColorKey,
+  safeColorKey,
   getTimelineEntryType,
   type LeaveType,
   type PlanningColorOption,
@@ -1404,15 +1406,17 @@ export function ProjectDrawer({
                         setSaving(true);
                         setSaveError(null);
 
+                        const nextColorKey = isLeaveEntry
+                          ? LEAVE_COLOR_OPTIONS.find(
+                              (option) =>
+                                getLeaveTypeFromColorKey(option.key) ===
+                                leaveType,
+                            )?.key ?? safeColorKey(project.colorKey)
+                          : getColorKeyForDepartment(department);
+
                         await onSaveMetadata(project.id, {
                           status,
-                          colorKey: isLeaveEntry
-                            ? LEAVE_COLOR_OPTIONS.find(
-                                (option) =>
-                                  getLeaveTypeFromColorKey(option.key) ===
-                                  leaveType,
-                              )?.key
-                            : undefined,
+                          colorKey: nextColorKey,
                           department: isLeaveEntry ? "OTHER" : department,
                           projectManagerId: isLeaveEntry
                             ? null

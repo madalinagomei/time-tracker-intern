@@ -374,34 +374,58 @@ const COLOR_KEY_ALIASES: Record<string, string> = {
   "clinical chemistry": "clinical-chemistry",
 };
 
-export function normalizeColorKey(colorKey: string) {
-  return COLOR_KEY_ALIASES[colorKey] ?? colorKey;
+export const DEFAULT_PROJECT_COLOR_KEY = "haematology";
+
+export function normalizeColorKey(colorKey?: string | null) {
+  const normalized = (colorKey ?? DEFAULT_PROJECT_COLOR_KEY).trim().toLowerCase();
+  const aliased = COLOR_KEY_ALIASES[normalized] ?? normalized;
+
+  return aliased || DEFAULT_PROJECT_COLOR_KEY;
 }
 
-export function getColorOption(colorKey: string) {
+export function safeColorKey(colorKey?: string | null) {
   const normalized = normalizeColorKey(colorKey);
+
+  return COLOR_OPTIONS.some((option) => option.key === normalized)
+    ? normalized
+    : DEFAULT_PROJECT_COLOR_KEY;
+}
+
+export function getColorOption(colorKey?: string | null) {
+  const normalized = safeColorKey(colorKey);
+
   return (
     COLOR_OPTIONS.find((option) => option.key === normalized) ??
-    COLOR_OPTIONS.find((option) => option.key === "point-of-care")!
+    COLOR_OPTIONS.find((option) => option.key === DEFAULT_PROJECT_COLOR_KEY) ??
+    COLOR_OPTIONS[0]!
   );
 }
 
 export function getProjectDepartmentFromColorKey(
-  colorKey: string,
+  colorKey?: string | null,
 ): ProjectDepartment | undefined {
   return getColorOption(colorKey).department;
 }
 
-export function isLeaveColorKey(colorKey: string) {
-  return normalizeColorKey(colorKey).startsWith("leave-");
+export function getColorKeyForDepartment(
+  department?: ProjectDepartment | null,
+) {
+  return (
+    DEPARTMENT_COLOR_OPTIONS.find((option) => option.department === department)?.key ??
+    DEFAULT_PROJECT_COLOR_KEY
+  );
 }
 
-export function getTimelineEntryType(colorKey: string): TimelineEntryType {
+export function isLeaveColorKey(colorKey?: string | null) {
+  return safeColorKey(colorKey).startsWith("leave-");
+}
+
+export function getTimelineEntryType(colorKey?: string | null): TimelineEntryType {
   return isLeaveColorKey(colorKey) ? "LEAVE" : "PROJECT";
 }
 
-export function getLeaveTypeFromColorKey(colorKey: string): LeaveType | null {
-  const normalized = normalizeColorKey(colorKey);
+export function getLeaveTypeFromColorKey(colorKey?: string | null): LeaveType | null {
+  const normalized = safeColorKey(colorKey);
 
   switch (normalized) {
     case "leave-vacation":

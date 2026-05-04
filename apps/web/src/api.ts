@@ -1,3 +1,10 @@
+import {
+  DEFAULT_PROJECT_COLOR_KEY,
+  getColorKeyForDepartment,
+  getProjectDepartmentFromColorKey,
+  safeColorKey,
+} from "./planning";
+
 const API_BASE = "http://localhost:4000";
 const DEMO_AUTH_STORAGE_KEY = "timeline-demo-session";
 
@@ -261,6 +268,19 @@ function startOfDayLocal(date: Date) {
   return next;
 }
 
+function sanitizeProject(project: Project): Project {
+  const colorKey = safeColorKey(project.colorKey);
+
+  return {
+    ...project,
+    colorKey,
+    department:
+      project.department ??
+      getProjectDepartmentFromColorKey(colorKey) ??
+      "OTHER",
+  };
+}
+
 function addDaysLocal(date: Date, amount: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + amount);
@@ -340,12 +360,17 @@ function getDemoAssignmentUser(
 }
 
 function enrichProject(project: Project, state: DemoState): Project {
+  const sanitizedProject = sanitizeProject(project);
+
   return {
-    ...project,
-    owner: getDemoProjectPerson(project.ownerId, state),
-    projectManager: getDemoProjectPerson(project.projectManagerId, state),
+    ...sanitizedProject,
+    owner: getDemoProjectPerson(sanitizedProject.ownerId, state),
+    projectManager: getDemoProjectPerson(
+      sanitizedProject.projectManagerId,
+      state,
+    ),
     assignments: state.assignments
-      .filter((assignment) => assignment.projectId === project.id)
+      .filter((assignment) => assignment.projectId === sanitizedProject.id)
       .sort(
         (left, right) =>
           new Date(left.startDate).getTime() - new Date(right.startDate).getTime(),
@@ -589,10 +614,34 @@ function readDemoState(): DemoState {
       throw new Error("Invalid demo data");
     }
 
-    return {
+    const sanitizedState: DemoState = {
       users: parsed.users as UserRow[],
-      projects: parsed.projects as Project[],
+      projects: (parsed.projects as Project[]).map(sanitizeProject),
       assignments: parsed.assignments as AssignmentRow[],
+    };
+
+    const shouldRewriteProjects = (parsed.projects as Project[]).some(
+      (project, index) => {
+        const sanitizedProject = sanitizedState.projects[index];
+
+        return (
+          project?.colorKey !== sanitizedProject?.colorKey ||
+          project?.department !== sanitizedProject?.department
+        );
+      },
+    );
+
+    if (shouldRewriteProjects) {
+      window.localStorage.setItem(
+        DEMO_DATA_STORAGE_KEY,
+        JSON.stringify(sanitizedState),
+      );
+    }
+
+    return {
+      users: sanitizedState.users,
+      projects: sanitizedState.projects,
+      assignments: sanitizedState.assignments,
     };
   } catch {
     window.localStorage.setItem(
@@ -608,7 +657,13 @@ function writeDemoState(state: DemoState) {
     return;
   }
 
-  window.localStorage.setItem(DEMO_DATA_STORAGE_KEY, JSON.stringify(state));
+  window.localStorage.setItem(
+    DEMO_DATA_STORAGE_KEY,
+    JSON.stringify({
+      ...state,
+      projects: state.projects.map(sanitizeProject),
+    } satisfies DemoState),
+  );
 }
 
 function getDemoProjects(state: DemoState) {
@@ -638,13 +693,21 @@ export async function createProject(
 ): Promise<Project> {
   const state = readDemoState();
   const nowIso = new Date().toISOString();
+  const normalizedColorKey = safeColorKey(
+    colorKey ??
+      getColorKeyForDepartment(metadata?.department) ??
+      DEFAULT_PROJECT_COLOR_KEY,
+  );
   const project: Project = {
     id: createDemoId("project"),
     name,
-    colorKey: colorKey ?? "software",
+    colorKey: normalizedColorKey,
     ownerId: ownerId ?? null,
     status: metadata?.status ?? "PLANNED",
-    department: metadata?.department ?? "OTHER",
+    department:
+      metadata?.department ??
+      getProjectDepartmentFromColorKey(normalizedColorKey) ??
+      "OTHER",
     description: metadata?.description ?? null,
     notes: metadata?.notes ?? null,
     projectManagerId: metadata?.projectManagerId ?? null,
@@ -859,6 +922,22 @@ export async function updateProject(
   const updated: Project = {
     ...existing,
     ...patch,
+    colorKey: safeColorKey(
+      patch.colorKey ??
+        (patch.department
+          ? getColorKeyForDepartment(patch.department)
+          : existing.colorKey),
+    ),
+    department:
+      patch.department ??
+      existing.department ??
+      getProjectDepartmentFromColorKey(
+        patch.colorKey ??
+          (patch.department
+            ? getColorKeyForDepartment(patch.department)
+            : existing.colorKey),
+      ) ??
+      "OTHER",
     updatedAt: new Date().toISOString(),
   };
 

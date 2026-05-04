@@ -54,6 +54,7 @@ import {
   makeDays,
   moveByWorkingDays,
   normalizeColorKey,
+  safeColorKey,
   snapToWorkingDay,
   startOfMonday,
   type TimelineDensityMode,
@@ -2520,10 +2521,12 @@ export function DashboardPage({
     name: string,
     colorKey: string,
   ) {
+    const normalizedColorKey = safeColorKey(colorKey);
     const updated = await updateProject(projectId, {
       name,
-      colorKey,
-      department: getProjectDepartmentFromColorKey(colorKey) ?? "OTHER",
+      colorKey: normalizedColorKey,
+      department:
+        getProjectDepartmentFromColorKey(normalizedColorKey) ?? "OTHER",
     });
 
     setProjects((previous) =>
@@ -2568,7 +2571,15 @@ export function DashboardPage({
       dueDate?: string | null;
     },
   ) {
-    const updated = await updateProject(projectId, patch);
+    const nextPatch = { ...patch };
+
+    if (nextPatch.colorKey === undefined) {
+      delete nextPatch.colorKey;
+    } else {
+      nextPatch.colorKey = safeColorKey(nextPatch.colorKey);
+    }
+
+    const updated = await updateProject(projectId, nextPatch);
     setProjects((previous) =>
       previous.map((project) => (project.id === projectId ? updated : project)),
     );
