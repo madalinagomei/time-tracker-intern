@@ -185,6 +185,9 @@ model Assignment {
   projectId String
   startDate DateTime
   endDate   DateTime
+  laneIndex Int?
+  focusStart DateTime?
+  focusEnd   DateTime?
 
   user    User    @relation(fields: [userId], references: [id])
   project Project @relation(fields: [projectId], references: [id])
@@ -193,5 +196,6 @@ model Assignment {
   updatedAt DateTime @updatedAt
 
   @@index([userId, startDate])
+  @@index([userId, laneIndex])
   @@index([projectId, startDate])
 }

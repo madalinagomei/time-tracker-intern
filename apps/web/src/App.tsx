@@ -2,13 +2,13 @@ import { useState } from "react";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import {
-  clearStoredDemoSession,
-  getStoredDemoSession,
+  getStoredSession,
+  logout,
   type Me,
 } from "./api";
 
 export default function App() {
-  const [me, setMe] = useState<Me | null>(() => getStoredDemoSession());
+  const [me, setMe] = useState<Me | null>(() => getStoredSession());
 
   if (!me) return <LoginPage onLoggedIn={setMe} />;
 
@@ -16,7 +16,7 @@ export default function App() {
     <DashboardPage
       me={me}
       onLogout={() => {
-        clearStoredDemoSession();
+        void logout();
         setMe(null);
       }}
     />

@@ -25,7 +25,6 @@ import type {
   UserRow,
 } from "../api";
 import {
-  COLOR_OPTIONS,
   DEPARTMENT_COLOR_OPTIONS,
   LEFT_COLUMN_WIDTH,
   LEAVE_COLOR_OPTIONS,
@@ -81,57 +80,16 @@ const MAX_MANUAL_ROW_HEIGHT = 900;
 const DUPLICATE_PREVIEW_ASSIGNMENT_ID = "__duplicate__assignment";
 const DEFAULT_NEW_PROJECT_COLOR_KEY = "haematology";
 
-const DEMO_TEAMS: TeamGroup[] = [
+const STUDIO_TEAM: TeamGroup[] = [
   {
-    id: "team-project-management",
-    name: "Project Management",
+    id: "studio",
+    name: "Studio",
     members: [
-      { id: "tm1", name: "Viviane Malkowski", role: "Project & Brand Manager" },
-      { id: "tm2", name: "Andrea Schaal", role: "Project Manager" },
-      { id: "tm3", name: "Mary Volz", role: "Project Manager" },
-      {
-        id: "tm4",
-        name: "Melissa Buer",
-        role: "Working Student Project Management",
-      },
-    ],
-  },
-  {
-    id: "team-copywriting",
-    name: "Copywriting & Editing",
-    members: [
-      { id: "tm5", name: "Jack Flanagan", role: "Copywriter & Editor" },
-      { id: "tm6", name: "Silke Over", role: "Copywriter & Editor" },
-      {
-        id: "tm7",
-        name: "Marque Pham",
-        role: "Working Student Proofreader & Editor",
-      },
-    ],
-  },
-  {
-    id: "team-creative",
-    name: "Creative",
-    members: [
-      { id: "tm8", name: "Emilian Ciobanu", role: "3D Artist" },
-      { id: "tm9", name: "Jorg Kappus", role: "Graphic Designer" },
-      { id: "tm10", name: "Soner Kaya", role: "Graphic Designer" },
-      { id: "tm11", name: "Hieu Nguyen", role: "Graphic Designer" },
-      { id: "tm12", name: "Iva Ristic", role: "Graphic Designer" },
-      {
-        id: "tm13",
-        name: "Philipp Schindhelm",
-        role: "Video & Multimedia Producer",
-      },
+      { id: "milion", name: "Milion" },
+      { id: "domino", name: "Domino" },
     ],
   },
 ];
-
-const USER_TEAM_MAP: Record<string, string> = {
-  emilian: "team-creative",
-  pm1: "team-project-management",
-  user1: "team-copywriting",
-};
 
 type AssignmentPreview = {
   assignmentId: string;
@@ -707,6 +665,36 @@ function AssignmentComposerPopover({
     }
   }
 
+  async function submitLeaveChoice() {
+    try {
+      setBusy(true);
+      setErr(null);
+
+      const label = leaveName.trim() || leaveLabel;
+      const existingProject =
+        projects.find(
+          (project) =>
+            normalizeColorKey(project.colorKey) === leaveColorKey &&
+            project.name.trim().toLowerCase() === label.toLowerCase(),
+        ) ??
+        (label === leaveLabel
+          ? projects.find(
+              (project) => normalizeColorKey(project.colorKey) === leaveColorKey,
+            )
+          : null);
+
+      if (existingProject) {
+        await onChooseProject(existingProject.id);
+        return;
+      }
+
+      await onCreateProject(label, leaveColorKey);
+    } catch (error: any) {
+      setErr(error?.message ?? "Failed to assign leave");
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <div className="fixed inset-0 z-40 bg-slate-950/10" onClick={onClose} />
@@ -733,13 +721,14 @@ function AssignmentComposerPopover({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:bg-zinc-800"
+            aria-label="Cancel assignment creation"
+            className="rounded-xl p-2 text-lg leading-none text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
           >
-            Close
+            ×
           </button>
         </div>
 
-        <div className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
           <div className="mb-4 inline-flex rounded-2xl bg-slate-100 p-1 ring-1 ring-slate-200 dark:bg-zinc-900 dark:ring-zinc-800">
             {([
               ["PROJECT", "Project"],
@@ -1088,45 +1077,6 @@ function AssignmentComposerPopover({
                 className="mt-2 w-full rounded-2xl bg-white px-3 py-2.5 text-sm ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300 dark:bg-zinc-950 dark:ring-zinc-800 dark:focus:ring-sky-800"
               />
 
-              <button
-                type="button"
-                disabled={busy}
-                onClick={async () => {
-                  try {
-                    setBusy(true);
-                    setErr(null);
-
-                    const label = leaveName.trim() || leaveLabel;
-                    const existingProject =
-                      projects.find(
-                        (project) =>
-                          normalizeColorKey(project.colorKey) === leaveColorKey &&
-                          project.name.trim().toLowerCase() ===
-                            label.toLowerCase(),
-                      ) ??
-                      (label === leaveLabel
-                        ? projects.find(
-                            (project) =>
-                              normalizeColorKey(project.colorKey) ===
-                              leaveColorKey,
-                          )
-                        : null);
-
-                    if (existingProject) {
-                      await onChooseProject(existingProject.id);
-                      return;
-                    }
-
-                    await onCreateProject(label, leaveColorKey);
-                  } catch (error: any) {
-                    setErr(error?.message ?? "Failed to assign leave");
-                    setBusy(false);
-                  }
-                }}
-                className="mt-4 w-full rounded-2xl bg-sky-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
-              >
-                {busy ? "Saving..." : "Create leave + assign"}
-              </button>
             </div>
           )}
 
@@ -1135,6 +1085,33 @@ function AssignmentComposerPopover({
               {err}
             </div>
           ) : null}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200/70 px-4 py-3 dark:border-zinc-800">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-xl px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-60 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={
+              busy || (entryType === "PROJECT" && search.trim().length < 2)
+            }
+            onClick={() => {
+              void (
+                entryType === "PROJECT"
+                  ? submitProjectChoice()
+                  : submitLeaveChoice()
+              );
+            }}
+            className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Creating..." : "Create"}
+          </button>
         </div>
       </div>
     </>
@@ -1687,7 +1664,7 @@ export function DashboardPage({
   const filteredTeams = useMemo(() => {
     const trimmed = deferredQuery.trim().toLowerCase();
 
-    return DEMO_TEAMS.filter((team) => {
+    return STUDIO_TEAM.filter((team) => {
       if (!trimmed) {
         return true;
       }
@@ -1765,7 +1742,7 @@ export function DashboardPage({
   }, [assignments, projects]);
 
   const selectedTeam = useMemo(
-    () => DEMO_TEAMS.find((team) => team.id === selectedTeamId) ?? null,
+    () => STUDIO_TEAM.find((team) => team.id === selectedTeamId) ?? null,
     [selectedTeamId],
   );
 
@@ -1773,9 +1750,7 @@ export function DashboardPage({
     const trimmed = deferredQuery.trim().toLowerCase();
 
     return users.filter((user) => {
-      const teamMatches = selectedTeamId
-        ? USER_TEAM_MAP[user.username] === selectedTeamId
-        : true;
+      const teamMatches = !selectedTeamId || selectedTeamId === "studio";
       const queryMatches = !trimmed
         ? true
         : user.displayName.toLowerCase().includes(trimmed);
@@ -2586,6 +2561,18 @@ export function DashboardPage({
     setActivityRefreshKey((value) => value + 1);
   }
 
+  async function handleUpdateAssignmentFocus(
+    assignmentId: string,
+    patch: { focusStart?: string | null; focusEnd?: string | null },
+  ) {
+    const updated = await updateAssignment(assignmentId, patch);
+    setAssignments((previous) =>
+      previous.map((assignment) =>
+        assignment.id === assignmentId ? updated : assignment,
+      ),
+    );
+  }
+
   useEffect(() => {
     if (!interaction) {
       return;
@@ -2949,7 +2936,7 @@ export function DashboardPage({
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search people or teams..."
+                  placeholder="Search Studio..."
                   className="w-full rounded-2xl bg-slate-50 px-3 py-2.5 text-sm ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300 dark:bg-zinc-900 dark:ring-zinc-800 dark:focus:ring-sky-800"
                 />
               </div>
@@ -2957,10 +2944,10 @@ export function DashboardPage({
               <div className="flex min-h-0 flex-1 flex-col rounded-[28px] border border-slate-200/80 bg-white/90 p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/95">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400 dark:text-zinc-500">
-                    Teams
+                    Studio
                   </div>
                   <div className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800">
-                    {selectedTeam?.name ?? "All teams"}
+                    {selectedTeam?.name ?? "Studio"}
                   </div>
                 </div>
 
@@ -2984,7 +2971,7 @@ export function DashboardPage({
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-white/92 px-4 py-3 backdrop-blur-md dark:border-zinc-800/60 dark:bg-zinc-950">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="rounded-full bg-slate-100/90 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200/80 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800">
-                    {selectedTeam?.name ?? "All teams"}
+                    {selectedTeam?.name ?? "Studio"}
                   </div>
                   <div className="rounded-full bg-slate-100/90 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200/80 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800">
                     {filteredUsers.length} people
@@ -3309,9 +3296,10 @@ export function DashboardPage({
           users={users}
           me={me}
           activityRefreshKey={activityRefreshKey}
+          selectedAssignmentId={selectedAssignmentId}
           onClose={() => setDrawerProjectId(null)}
           onSaveMetadata={handleSaveProjectMetadata}
-          colorOptions={COLOR_OPTIONS}
+          onUpdateAssignment={handleUpdateAssignmentFocus}
         />
 
         {toast ? (

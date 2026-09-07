@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { DEMO_LOGIN_PASSWORD, login } from "../api";
+import { login } from "../api";
 import type { Me } from "../api";
 
 export function LoginPage({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
-  const [username, setUsername] = useState("emilian");
-  const [password, setPassword] = useState(DEMO_LOGIN_PASSWORD);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -30,16 +30,16 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
             <div className="h-10 w-10 rounded-2xl bg-zinc-800 ring-1 ring-zinc-700" />
             <div>
               <div className="text-lg font-semibold leading-5">
-                Time Tracker
+                Timeline
               </div>
-              <div className="text-sm text-zinc-400">Internal prototype</div>
+              <div className="text-sm text-zinc-400">Studio workspace</div>
             </div>
           </div>
 
           <div className="rounded-2xl bg-zinc-900/60 p-6 ring-1 ring-zinc-800 shadow-xl">
             <h1 className="text-xl font-semibold">Sign in</h1>
             <p className="mt-1 text-sm text-zinc-400">
-              Use your prototype username + password.
+              Sign in to the shared Studio timeline.
             </p>
 
             <form className="mt-6 space-y-4" onSubmit={onSubmit}>
@@ -76,10 +76,6 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
                 {loading ? "Signing in..." : "Sign in"}
               </button>
 
-              <div className="text-xs text-zinc-500">
-                Users:{" "}
-                <span className="text-zinc-300">emilian / pm1 / user1</span>
-              </div>
             </form>
           </div>
         </div>

@@ -1,5 +1,4 @@
 [
-  { "username": "emilian", "displayName": "Emilian", "role": "ADMIN" },
-  { "username": "pm1", "displayName": "PM 1", "role": "ADMIN" },
-  { "username": "user1", "displayName": "User 1", "role": "USER" }
+  { "username": "milion", "displayName": "Milion", "role": "USER" },
+  { "username": "domino", "displayName": "Domino", "role": "USER" }
 ]

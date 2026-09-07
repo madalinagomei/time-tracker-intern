@@ -21,30 +21,6 @@ export function TeamsPanel({
 }) {
   return (
     <div className="space-y-2">
-      <button
-        type="button"
-        onClick={() => onSelectTeam(null)}
-        className={[
-          "flex w-full items-center justify-between rounded-3xl border px-3 py-3 text-left transition",
-          selectedTeamId === null
-            ? "border-sky-200 bg-sky-50/80 shadow-sm dark:border-sky-900/50 dark:bg-sky-950/20"
-            : "border-slate-200/80 bg-white/90 hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
-        ].join(" ")}
-      >
-        <div>
-          <div className="text-sm font-semibold text-slate-900 dark:text-zinc-100">
-            All Teams
-          </div>
-          <div className="mt-0.5 text-[11px] text-slate-500 dark:text-zinc-400">
-            Show everyone on the timeline
-          </div>
-        </div>
-
-        <div className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800">
-          {teams.reduce((total, team) => total + team.members.length, 0)}
-        </div>
-      </button>
-
       {teams.map((team) => {
         const selected = selectedTeamId === team.id;
 
@@ -65,7 +41,7 @@ export function TeamsPanel({
                 {team.name}
               </div>
               <div className="mt-0.5 text-[11px] text-slate-500 dark:text-zinc-400">
-                {team.members.length} people
+                Shared timeline
               </div>
             </div>
 

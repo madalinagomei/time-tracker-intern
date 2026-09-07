@@ -10,7 +10,7 @@ const adapter = new PrismaPg({ connectionString });
 
 const prisma = new PrismaClient({ adapter });
 
-const INITIAL_PASSWORD = "ChangeMe123!";
+const INITIAL_PASSWORD = process.env.INITIAL_USER_PASSWORD;
 
 const specialProjects = [
   {
@@ -38,6 +38,12 @@ type SeedUser = {
 };
 
 async function main() {
+  if (!INITIAL_PASSWORD) {
+    throw new Error(
+      "INITIAL_USER_PASSWORD is required to seed Milion and Domino safely.",
+    );
+  }
+
   const filePath = path.join(process.cwd(), "seed", "users.seed.json");
   const raw = fs.readFileSync(filePath, "utf-8");
   const users = JSON.parse(raw) as SeedUser[];
@@ -50,7 +56,6 @@ async function main() {
       update: {
         displayName: u.displayName,
         role: u.role,
-        passwordHash: hash,
       },
       create: {
         username: u.username,

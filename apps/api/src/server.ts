@@ -3,9 +3,11 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcrypt";
+import jwt, { type JwtPayload } from "jsonwebtoken";
 import { z } from "zod";
 import http from "http";
 import { Server as IOServer } from "socket.io";
+import type { NextFunction, Request, Response } from "express";
 import {
   PrismaClient,
   ProjectDepartment,
@@ -19,19 +21,84 @@ const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 const app = express();
+const clientOrigins = (process.env.CLIENT_ORIGIN ?? "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const configuredJwtSecret = process.env.JWT_SECRET;
+const cookieName = process.env.COOKIE_NAME ?? "timeline_session";
+const studioUsernames: string[] = ["milion", "domino"];
+
+if (!configuredJwtSecret) {
+  throw new Error("JWT_SECRET must be configured before starting the API.");
+}
+const jwtSecret: string = configuredJwtSecret;
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: clientOrigins,
     credentials: true,
   }),
 );
 
 const server = http.createServer(app);
 const io = new IOServer(server, {
-  cors: { origin: "http://localhost:5173", credentials: true },
+  cors: { origin: clientOrigins, credentials: true },
 });
+
+type AuthenticatedRequest = Request & {
+  authUser?: { id: string; username: string; role: string };
+};
+
+function isStudioUsername(username: string) {
+  return studioUsernames.includes(username);
+}
+
+function studioProjectScope() {
+  return {
+    OR: [
+      { owner: { is: { username: { in: studioUsernames } } } },
+      { projectManager: { is: { username: { in: studioUsernames } } } },
+      {
+        assignments: {
+          some: { user: { is: { username: { in: studioUsernames } } } },
+        },
+      },
+      { colorKey: { startsWith: "leave-" } },
+    ],
+  };
+}
+
+function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const bearerToken = req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  const token = bearerToken || req.cookies?.[cookieName];
+
+  if (!token) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+
+  try {
+    const payload = jwt.verify(token, jwtSecret) as JwtPayload;
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.username !== "string" ||
+      typeof payload.role !== "string"
+    ) {
+      throw new Error("Invalid session payload");
+    }
+
+    req.authUser = {
+      id: payload.sub,
+      username: payload.username,
+      role: payload.role,
+    };
+    return next();
+  } catch {
+    return res.status(401).json({ error: "Session expired or invalid" });
+  }
+}
 
 function isWeekend(date: Date) {
   const day = date.getDay();
@@ -94,6 +161,26 @@ function countWorkingDaysInclusiveFromDates(
   }
 
   return Math.max(1, count);
+}
+
+function clampFocusRange(
+  focusStart: Date | null,
+  focusEnd: Date | null,
+  assignmentStart: Date,
+  assignmentEnd: Date,
+) {
+  if (!focusStart || !focusEnd) {
+    return { focusStart: null, focusEnd: null };
+  }
+
+  const start = new Date(Math.max(focusStart.getTime(), assignmentStart.getTime()));
+  const end = new Date(Math.min(focusEnd.getTime(), assignmentEnd.getTime()));
+
+  if (start >= end) {
+    return { focusStart: null, focusEnd: null };
+  }
+
+  return { focusStart: start, focusEnd: end };
 }
 
 function formatProjectStatusLabel(status: string | null | undefined) {
@@ -222,12 +309,32 @@ app.post("/auth/login", async (req, res) => {
     password: z.string(),
   });
   const { username, password } = schema.parse(req.body);
+  const normalizedUsername = username.trim().toLowerCase();
 
-  const user = await prisma.user.findUnique({ where: { username } });
+  if (!isStudioUsername(normalizedUsername)) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { username: normalizedUsername },
+  });
   if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+
+  const accessToken = jwt.sign(
+    { username: user.username, role: user.role },
+    jwtSecret,
+    { subject: user.id, expiresIn: "7d" },
+  );
+
+  res.cookie(cookieName, accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
 
   res.json({
     id: user.id,
@@ -235,16 +342,29 @@ app.post("/auth/login", async (req, res) => {
     displayName: user.displayName,
     role: user.role,
     mustChangePassword: user.mustChangePassword,
+    accessToken,
   });
+});
+
+app.post("/auth/logout", (_req, res) => {
+  res.clearCookie(cookieName, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+  res.status(204).end();
 });
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.use(requireAuth);
+
 /** PROJECTS **/
 app.get("/projects", async (_req, res) => {
   const projects = await prisma.project.findMany({
+    where: studioProjectScope(),
     orderBy: { createdAt: "asc" },
     include: {
       owner: {
@@ -297,12 +417,13 @@ app.post("/projects", async (req, res) => {
   });
 
   const parsed = schema.parse(req.body);
+  const ownerId = (req as AuthenticatedRequest).authUser!.id;
 
   const project = await prisma.project.create({
     data: {
       name: parsed.name,
       colorKey: parsed.colorKey ?? "poc",
-      ownerId: parsed.ownerId ?? null,
+      ownerId,
 
       status: parsed.status ?? ProjectStatus.PLANNED,
       department: parsed.department ?? ProjectDepartment.OTHER,
@@ -573,6 +694,7 @@ app.delete("/projects/:id", async (req, res) => {
 /** USERS (lista pentru Plan) **/
 app.get("/users", async (_req, res) => {
   const users = await prisma.user.findMany({
+    where: { username: { in: studioUsernames } },
     select: {
       id: true,
       username: true,
@@ -617,7 +739,6 @@ app.get("/projects/:id/comments", async (req, res) => {
 app.post("/projects/:id/comments", async (req, res) => {
   try {
     const schema = z.object({
-      authorId: z.string().min(1),
       body: z.string().min(1),
       attachments: z
         .array(
@@ -631,11 +752,12 @@ app.post("/projects/:id/comments", async (req, res) => {
     });
 
     const parsed = schema.parse(req.body);
+    const authorId = (req as AuthenticatedRequest).authUser!.id;
 
     const item = await prisma.comment.create({
       data: {
         projectId: req.params.id,
-        authorId: parsed.authorId,
+        authorId,
         body: parsed.body,
         attachments: parsed.attachments?.length
           ? {
@@ -687,17 +809,17 @@ app.get("/comments/:id/reactions", async (req, res) => {
 app.post("/comments/:id/reactions", async (req, res) => {
   try {
     const schema = z.object({
-      userId: z.string().min(1),
       type: z.enum(["LIKE", "HEART", "CLAP", "WOW", "CHECK"]),
     });
 
     const parsed = schema.parse(req.body);
+    const userId = (req as AuthenticatedRequest).authUser!.id;
 
     const existing = await prisma.commentReaction.findUnique({
       where: {
         commentId_userId_type: {
           commentId: req.params.id,
-          userId: parsed.userId,
+          userId,
           type: parsed.type as any,
         },
       },
@@ -714,7 +836,7 @@ app.post("/comments/:id/reactions", async (req, res) => {
     const created = await prisma.commentReaction.create({
       data: {
         commentId: req.params.id,
-        userId: parsed.userId,
+        userId,
         type: parsed.type as any,
       },
     });
@@ -758,6 +880,10 @@ app.patch("/comments/:id", async (req, res) => {
       return res
         .status(400)
         .json({ error: "System comments cannot be edited" });
+    }
+
+    if (existing.authorId !== (req as AuthenticatedRequest).authUser!.id) {
+      return res.status(403).json({ error: "You can only edit your own updates" });
     }
 
     const updated = await prisma.comment.update({
@@ -806,6 +932,10 @@ app.delete("/comments/:id", async (req, res) => {
         .json({ error: "System comments cannot be deleted" });
     }
 
+    if (existing.authorId !== (req as AuthenticatedRequest).authUser!.id) {
+      return res.status(403).json({ error: "You can only delete your own updates" });
+    }
+
     await prisma.commentReaction.deleteMany({
       where: { commentId: req.params.id },
     });
@@ -835,7 +965,9 @@ app.get("/assignments", async (req, res) => {
 
     const parsed = schema.parse(req.query);
 
-    const where: any = {};
+    const where: any = {
+      user: { is: { username: { in: studioUsernames } } },
+    };
 
     if (parsed.from || parsed.to) {
       const and: any[] = [];
@@ -882,9 +1014,12 @@ app.post("/assignments", async (req, res) => {
       projectId: z.string().min(1),
       startDate: z.string().min(1),
       lengthDays: z.number().int().min(1).default(1),
+      laneIndex: z.number().int().min(0).optional(),
     });
 
-    const { userId, projectId, startDate, lengthDays } = schema.parse(req.body);
+    const { userId, projectId, startDate, lengthDays, laneIndex } = schema.parse(
+      req.body,
+    );
 
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
@@ -897,6 +1032,7 @@ app.post("/assignments", async (req, res) => {
         projectId,
         startDate: start,
         endDate: end,
+        laneIndex,
       },
       include: {
         user: {
@@ -948,9 +1084,14 @@ app.patch("/assignments/:id", async (req, res) => {
     const schema = z.object({
       startDate: z.string().optional(),
       lengthDays: z.number().int().min(1).optional(),
+      userId: z.string().min(1).optional(),
+      laneIndex: z.number().int().min(0).nullable().optional(),
+      focusStart: z.string().nullable().optional(),
+      focusEnd: z.string().nullable().optional(),
     });
 
-    const { startDate, lengthDays } = schema.parse(req.body);
+    const { userId, startDate, lengthDays, laneIndex, focusStart, focusEnd } =
+      schema.parse(req.body);
 
     const existing = await prisma.assignment.findUnique({
       where: { id: req.params.id },
@@ -981,12 +1122,53 @@ app.patch("/assignments/:id", async (req, res) => {
 
     const nextLength = lengthDays ?? currentLength;
     const end = addWorkingDaysInclusive(start, nextLength, "DE-SH");
+    const hasFocusPatch = focusStart !== undefined || focusEnd !== undefined;
+    const movedWholeAssignment =
+      startDate !== undefined && nextLength === currentLength;
+    const moveDeltaMs = start.getTime() - existing.startDate.getTime();
+    const shiftFocusDate = (value: Date | null) =>
+      value && movedWholeAssignment
+        ? new Date(value.getTime() + moveDeltaMs)
+        : value;
+    const requestedFocusStart =
+      focusStart === undefined
+        ? shiftFocusDate(existing.focusStart)
+        : focusStart
+          ? new Date(focusStart)
+          : null;
+    const requestedFocusEnd =
+      focusEnd === undefined
+        ? shiftFocusDate(existing.focusEnd)
+        : focusEnd
+          ? new Date(focusEnd)
+          : null;
+    const nextFocus = clampFocusRange(
+      requestedFocusStart,
+      requestedFocusEnd,
+      start,
+      end,
+    );
+
+    if (
+      hasFocusPatch &&
+      requestedFocusStart &&
+      requestedFocusEnd &&
+      !nextFocus.focusStart
+    ) {
+      return res.status(400).json({
+        error: "Focus period must stay inside the assignment date range.",
+      });
+    }
 
     const item = await prisma.assignment.update({
       where: { id: req.params.id },
       data: {
         startDate: start,
         endDate: end,
+        ...(userId !== undefined ? { userId } : {}),
+        ...(laneIndex !== undefined ? { laneIndex } : {}),
+        focusStart: nextFocus.focusStart,
+        focusEnd: nextFocus.focusEnd,
       },
     });
 

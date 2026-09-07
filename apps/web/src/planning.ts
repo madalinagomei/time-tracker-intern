@@ -117,7 +117,14 @@ export type LeaveType =
 
 export type TimelineAssignmentLike = Pick<
   AssignmentRow,
-  "id" | "userId" | "projectId" | "startDate" | "endDate" | "laneIndex"
+  | "id"
+  | "userId"
+  | "projectId"
+  | "startDate"
+  | "endDate"
+  | "laneIndex"
+  | "focusStart"
+  | "focusEnd"
 > & {
   isDraft?: boolean;
 };
