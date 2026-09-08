@@ -32,14 +32,14 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
               <div className="text-lg font-semibold leading-5">
                 Timeline
               </div>
-              <div className="text-sm text-zinc-400">Studio workspace</div>
+              <div className="text-sm text-zinc-400">Creative Team workspace</div>
             </div>
           </div>
 
           <div className="rounded-2xl bg-zinc-900/60 p-6 ring-1 ring-zinc-800 shadow-xl">
             <h1 className="text-xl font-semibold">Sign in</h1>
             <p className="mt-1 text-sm text-zinc-400">
-              Sign in to the shared Studio timeline.
+              Sign in to the shared Creative Team timeline.
             </p>
 
             <form className="mt-6 space-y-4" onSubmit={onSubmit}>

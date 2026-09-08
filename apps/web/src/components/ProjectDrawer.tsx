@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  createAssignmentFocusPeriod,
   createProjectComment,
+  deleteAssignmentFocusPeriod,
   deleteProjectComment,
   getProjectComments,
+  updateAssignmentFocusPeriod,
   updateProjectComment,
 } from "../api";
 import type {
+  AssignmentFocusPeriod,
   AssignmentRow,
   Project,
   ProjectComment,
@@ -46,6 +50,10 @@ function exclusiveIsoFromInput(value: string) {
   return date.toISOString();
 }
 
+function formatFocusDateRange(startDate: string, endDate: string) {
+  return `${toDateInputValue(startDate)} – ${inclusiveEndInput(endDate)}`;
+}
+
 export function ProjectDrawer({
   open,
   project,
@@ -56,7 +64,7 @@ export function ProjectDrawer({
   selectedAssignmentId,
   onClose,
   onSaveMetadata,
-  onUpdateAssignment,
+  onAssignmentUpdated,
 }: {
   open: boolean;
   project: Project | null;
@@ -81,13 +89,7 @@ export function ProjectDrawer({
       dueDate?: string | null;
     },
   ) => Promise<void>;
-  onUpdateAssignment: (
-    assignmentId: string,
-    patch: {
-      focusStart?: string | null;
-      focusEnd?: string | null;
-    },
-  ) => Promise<void>;
+  onAssignmentUpdated: (assignment: AssignmentRow) => void;
 }) {
   const [description, setDescription] = useState("");
   const [savingDescription, setSavingDescription] = useState(false);
@@ -102,6 +104,10 @@ export function ProjectDrawer({
   const [focusAssignmentId, setFocusAssignmentId] = useState("");
   const [focusStartInput, setFocusStartInput] = useState("");
   const [focusEndInput, setFocusEndInput] = useState("");
+  const [editingFocusPeriodId, setEditingFocusPeriodId] = useState<string | null>(
+    null,
+  );
+  const [showFocusForm, setShowFocusForm] = useState(false);
   const [savingFocus, setSavingFocus] = useState(false);
   const [focusError, setFocusError] = useState<string | null>(null);
 
@@ -128,6 +134,33 @@ export function ProjectDrawer({
   const focusEndMax = focusAssignment
     ? inclusiveEndInput(focusAssignment.endDate)
     : "";
+  const focusPeriods = useMemo<AssignmentFocusPeriod[]>(() => {
+    if (!focusAssignment) return [];
+
+    const periods = focusAssignment.focusPeriods ??
+      (focusAssignment.focusStart && focusAssignment.focusEnd
+        ? [
+            {
+              id: "legacy-focus",
+              assignmentId: focusAssignment.id,
+              startDate: focusAssignment.focusStart,
+              endDate: focusAssignment.focusEnd,
+              createdAt: "",
+            },
+          ]
+        : []);
+
+    return [...periods].sort(
+      (left, right) =>
+        new Date(left.startDate).getTime() - new Date(right.startDate).getTime(),
+    );
+  }, [
+    focusAssignment?.endDate,
+    focusAssignment?.focusEnd,
+    focusAssignment?.focusPeriods,
+    focusAssignment?.focusStart,
+    focusAssignment?.id,
+  ]);
   const visibleComments = comments.filter((comment) => comment.kind !== "SYSTEM");
 
   useEffect(() => {
@@ -142,21 +175,17 @@ export function ProjectDrawer({
     if (!focusAssignment) {
       setFocusStartInput("");
       setFocusEndInput("");
+      setEditingFocusPeriodId(null);
+      setShowFocusForm(false);
       return;
     }
 
-    setFocusStartInput(
-      focusAssignment.focusStart
-        ? toDateInputValue(focusAssignment.focusStart)
-        : toDateInputValue(focusAssignment.startDate),
-    );
-    setFocusEndInput(
-      focusAssignment.focusEnd
-        ? inclusiveEndInput(focusAssignment.focusEnd)
-        : inclusiveEndInput(focusAssignment.endDate),
-    );
+    setFocusStartInput(toDateInputValue(focusAssignment.startDate));
+    setFocusEndInput(inclusiveEndInput(focusAssignment.endDate));
+    setEditingFocusPeriodId(null);
+    setShowFocusForm(false);
     setFocusError(null);
-  }, [focusAssignment?.id, focusAssignment?.focusStart, focusAssignment?.focusEnd]);
+  }, [focusAssignment?.id]);
 
   useEffect(() => {
     if (!open || !project) return;
@@ -236,13 +265,70 @@ export function ProjectDrawer({
     try {
       setSavingFocus(true);
       setFocusError(null);
-      await onUpdateAssignment(focusAssignment.id, {
-        focusStart: `${focusStartInput}T00:00:00.000Z`,
-        focusEnd: exclusiveIsoFromInput(focusEndInput),
-      });
+      const payload = {
+        startDate: `${focusStartInput}T00:00:00.000Z`,
+        endDate: exclusiveIsoFromInput(focusEndInput),
+      };
+      const updated = editingFocusPeriodId
+        ? await updateAssignmentFocusPeriod(
+            focusAssignment.id,
+            editingFocusPeriodId,
+            payload,
+          )
+        : await createAssignmentFocusPeriod(focusAssignment.id, payload);
+      onAssignmentUpdated(updated);
+      setEditingFocusPeriodId(null);
+      setShowFocusForm(false);
     } catch (error) {
       setFocusError(
         error instanceof Error ? error.message : "Failed to save focus period",
+      );
+    } finally {
+      setSavingFocus(false);
+    }
+  }
+
+  function beginFocusPeriod() {
+    if (!focusAssignment) return;
+
+    setEditingFocusPeriodId(null);
+    setFocusStartInput(toDateInputValue(focusAssignment.startDate));
+    setFocusEndInput(inclusiveEndInput(focusAssignment.endDate));
+    setFocusError(null);
+    setShowFocusForm(true);
+  }
+
+  function editFocusPeriod(period: AssignmentFocusPeriod) {
+    setEditingFocusPeriodId(period.id);
+    setFocusStartInput(toDateInputValue(period.startDate));
+    setFocusEndInput(inclusiveEndInput(period.endDate));
+    setFocusError(null);
+    setShowFocusForm(true);
+  }
+
+  async function removeFocusPeriod(period: AssignmentFocusPeriod) {
+    if (!focusAssignment) return;
+    if (period.id === "legacy-focus") {
+      setFocusError("Apply the focus-period migration before editing this legacy focus.");
+      return;
+    }
+    if (!window.confirm("Delete this focus period?")) return;
+
+    try {
+      setSavingFocus(true);
+      setFocusError(null);
+      const updated = await deleteAssignmentFocusPeriod(
+        focusAssignment.id,
+        period.id,
+      );
+      onAssignmentUpdated(updated);
+      if (editingFocusPeriodId === period.id) {
+        setEditingFocusPeriodId(null);
+        setShowFocusForm(false);
+      }
+    } catch (error) {
+      setFocusError(
+        error instanceof Error ? error.message : "Failed to delete focus period",
       );
     } finally {
       setSavingFocus(false);
@@ -350,7 +436,7 @@ export function ProjectDrawer({
             <section className="rounded-2xl border border-sky-200/80 bg-sky-50/45 p-4 dark:border-sky-900/45 dark:bg-sky-950/16">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Focus period
+                  Focus periods
                 </div>
                 <div className="text-xs text-zinc-500 dark:text-zinc-400">
                   {selectedFocusUser?.displayName ?? "Assignment"}
@@ -372,66 +458,114 @@ export function ProjectDrawer({
                   })}
                 </select>
               ) : null}
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <label className="grid gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                  Focus start
-                  <input
-                    type="date"
-                    min={focusStartMin}
-                    max={focusEndMax}
-                    value={focusStartInput}
-                    onChange={(event) => setFocusStartInput(event.target.value)}
-                    className="rounded-xl bg-white px-2.5 py-2 text-sm ring-1 ring-sky-200 outline-none dark:bg-zinc-950 dark:ring-sky-900/60"
-                  />
-                </label>
-                <label className="grid gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                  Focus end
-                  <input
-                    type="date"
-                    min={focusStartMin}
-                    max={focusEndMax}
-                    value={focusEndInput}
-                    onChange={(event) => setFocusEndInput(event.target.value)}
-                    className="rounded-xl bg-white px-2.5 py-2 text-sm ring-1 ring-sky-200 outline-none dark:bg-zinc-950 dark:ring-sky-900/60"
-                  />
-                </label>
+              <div className="mt-3 space-y-2">
+                {focusPeriods.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-sky-200/90 px-3 py-2 text-sm text-zinc-500 dark:border-sky-900/60 dark:text-zinc-400">
+                    No focus periods yet.
+                  </div>
+                ) : (
+                  focusPeriods.map((period) => (
+                    <div
+                      key={period.id}
+                      className="flex items-center justify-between gap-3 rounded-xl bg-white/70 px-3 py-2 dark:bg-zinc-950/60"
+                      >
+                      <div className="min-w-0 text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                        {formatFocusDateRange(period.startDate, period.endDate)}
+                      </div>
+                      {period.id === "legacy-focus" ? (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                          Legacy
+                        </span>
+                      ) : (
+                        <div className="flex shrink-0 gap-1 text-xs">
+                          <button
+                            type="button"
+                            disabled={savingFocus}
+                            onClick={() => editFocusPeriod(period)}
+                            className="rounded-lg px-2 py-1 text-sky-700 transition hover:bg-sky-100 disabled:opacity-50 dark:text-sky-300 dark:hover:bg-sky-900/35"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingFocus}
+                            onClick={() => void removeFocusPeriod(period)}
+                            className="rounded-lg px-2 py-1 text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
+              {!showFocusForm ? (
+                <button
+                  type="button"
+                  disabled={savingFocus}
+                  onClick={beginFocusPeriod}
+                  className="mt-3 rounded-xl border border-sky-200 bg-white/70 px-3 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-50 dark:border-sky-900/60 dark:bg-zinc-950/60 dark:text-sky-300 dark:hover:bg-sky-900/30"
+                >
+                  + Add focus period
+                </button>
+              ) : (
+                <div className="mt-3 rounded-xl border border-sky-200/90 p-3 dark:border-sky-900/60">
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="grid gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Focus start
+                      <input
+                        type="date"
+                        min={focusStartMin}
+                        max={focusEndMax}
+                        value={focusStartInput}
+                        onChange={(event) => setFocusStartInput(event.target.value)}
+                        className="rounded-xl bg-white px-2.5 py-2 text-sm ring-1 ring-sky-200 outline-none dark:bg-zinc-950 dark:ring-sky-900/60"
+                      />
+                    </label>
+                    <label className="grid gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Focus end
+                      <input
+                        type="date"
+                        min={focusStartMin}
+                        max={focusEndMax}
+                        value={focusEndInput}
+                        onChange={(event) => setFocusEndInput(event.target.value)}
+                        className="rounded-xl bg-white px-2.5 py-2 text-sm ring-1 ring-sky-200 outline-none dark:bg-zinc-950 dark:ring-sky-900/60"
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={savingFocus}
+                      onClick={() => {
+                        setEditingFocusPeriodId(null);
+                        setShowFocusForm(false);
+                        setFocusError(null);
+                      }}
+                      className="rounded-xl px-3 py-2 text-sm font-medium text-zinc-600 transition hover:bg-white/70 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingFocus || !focusStartInput || !focusEndInput}
+                      onClick={() => void saveFocus()}
+                      className="rounded-xl bg-sky-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
+                    >
+                      {savingFocus
+                        ? "Saving..."
+                        : editingFocusPeriodId
+                          ? "Save focus"
+                          : "Add focus"}
+                    </button>
+                  </div>
+                </div>
+              )}
               {focusError ? (
                 <div className="mt-2 text-sm text-red-600 dark:text-red-300">{focusError}</div>
               ) : null}
-              <div className="mt-3 flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={savingFocus || !focusAssignment.focusStart}
-                  onClick={async () => {
-                    try {
-                      setSavingFocus(true);
-                      setFocusError(null);
-                      await onUpdateAssignment(focusAssignment.id, {
-                        focusStart: null,
-                        focusEnd: null,
-                      });
-                    } catch (error) {
-                      setFocusError(
-                        error instanceof Error ? error.message : "Failed to clear focus period",
-                      );
-                    } finally {
-                      setSavingFocus(false);
-                    }
-                  }}
-                  className="rounded-xl px-3 py-2 text-sm font-medium text-zinc-600 transition hover:bg-white/70 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                >
-                  Clear focus
-                </button>
-                <button
-                  type="button"
-                  disabled={savingFocus || !focusStartInput || !focusEndInput}
-                  onClick={() => void saveFocus()}
-                  className="rounded-xl bg-sky-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
-                >
-                  {savingFocus ? "Saving..." : "Set focus"}
-                </button>
-              </div>
             </section>
           ) : null}
 

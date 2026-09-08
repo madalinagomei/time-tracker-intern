@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Project, UserRow } from "../api";
+import type { AssignmentFocusPeriod, Project, UserRow } from "../api";
 import {
   getAvatarTone,
   getColorOption,
@@ -142,19 +142,14 @@ function formatAssignmentDateRange(startDate: string, endDate: string) {
   return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
 }
 
-function getFocusSegment(
+function getFocusSegments(
   days: Date[],
-  focusStart: string | null | undefined,
-  focusEnd: string | null | undefined,
+  focusPeriods: AssignmentFocusPeriod[] | undefined,
+  legacyFocusStart: string | null | undefined,
+  legacyFocusEnd: string | null | undefined,
   clampedStart: number,
   clampedLength: number,
 ) {
-  if (!focusStart || !focusEnd) {
-    return null;
-  }
-
-  const focusStartKey = isoDateOnlyLocal(new Date(focusStart));
-  const focusEndKey = isoDateOnlyLocal(new Date(focusEnd));
   const firstDayKey = isoDateOnlyLocal(days[0]);
   const lastDayKey = isoDateOnlyLocal(days[days.length - 1]);
   const getTimelineIndex = (dateKey: string) => {
@@ -162,22 +157,43 @@ function getFocusSegment(
     if (exactIndex !== -1) return exactIndex;
     return dateKey < firstDayKey ? 0 : dateKey > lastDayKey ? days.length : 0;
   };
-  const startIndex = getTimelineIndex(focusStartKey);
-  const endIndex = getTimelineIndex(focusEndKey);
-  const visibleStart = Math.max(clampedStart, startIndex);
-  const visibleEnd = Math.min(
-    clampedStart + clampedLength,
-    endIndex,
-  );
 
-  if (visibleEnd <= visibleStart) {
-    return null;
-  }
+  // A missing relation means this response came from the legacy API shape.
+  // An explicit empty array means all relation-backed periods were deleted.
+  const periods =
+    focusPeriods ??
+    (legacyFocusStart && legacyFocusEnd
+      ? [
+          {
+            id: "legacy-focus",
+            assignmentId: "legacy",
+            startDate: legacyFocusStart,
+            endDate: legacyFocusEnd,
+            createdAt: "",
+          },
+        ]
+      : []);
 
-  return {
-    startOffsetDays: visibleStart - clampedStart,
-    lengthDays: visibleEnd - visibleStart,
-  };
+  return periods.flatMap((period) => {
+    const startIndex = getTimelineIndex(
+      isoDateOnlyLocal(new Date(period.startDate)),
+    );
+    const endIndex = getTimelineIndex(isoDateOnlyLocal(new Date(period.endDate)));
+    const visibleStart = Math.max(clampedStart, startIndex);
+    const visibleEnd = Math.min(clampedStart + clampedLength, endIndex);
+
+    if (visibleEnd <= visibleStart) {
+      return [];
+    }
+
+    return [
+      {
+        id: period.id,
+        startOffsetDays: visibleStart - clampedStart,
+        lengthDays: visibleEnd - visibleStart,
+      },
+    ];
+  });
 }
 
 function getActionMenuPosition(triggerRect: DOMRect) {
@@ -294,7 +310,7 @@ export function UserRowLine({
     personName: string;
     dateRange: string;
     leaveLabel: string | null;
-    focusRange: string | null;
+    focusRanges: string[];
     top: number;
     left: number;
   } | null>(null);
@@ -558,8 +574,9 @@ export function UserRowLine({
               const isSelected =
                 !isTransientPreview && selectedAssignmentId === item.assignment.id;
               const leaveType = getLeaveTypeFromColorKey(project.colorKey);
-              const focusSegment = getFocusSegment(
+              const focusSegments = getFocusSegments(
                 days,
+                item.assignment.focusPeriods,
                 item.assignment.focusStart,
                 item.assignment.focusEnd,
                 item.clampedStart,
@@ -589,13 +606,20 @@ export function UserRowLine({
                       leaveLabel: leaveType
                         ? getDefaultLabelForLeaveType(leaveType)
                         : null,
-                      focusRange:
-                        item.assignment.focusStart && item.assignment.focusEnd
-                          ? formatAssignmentDateRange(
-                              item.assignment.focusStart,
-                              item.assignment.focusEnd,
-                            )
-                          : null,
+                      focusRanges: (item.assignment.focusPeriods ??
+                        (item.assignment.focusStart && item.assignment.focusEnd
+                          ? [
+                              {
+                                startDate: item.assignment.focusStart,
+                                endDate: item.assignment.focusEnd,
+                              },
+                            ]
+                          : [])).map((period) =>
+                        formatAssignmentDateRange(
+                          period.startDate,
+                          period.endDate,
+                        ),
+                      ),
                       ...position,
                     });
                   }}
@@ -627,8 +651,9 @@ export function UserRowLine({
                 >
                   <div className="pointer-events-none absolute inset-[1px] rounded-[13px] bg-[linear-gradient(180deg,rgba(255,255,255,0.26),rgba(255,255,255,0.08)_42%,rgba(15,23,42,0.05))] opacity-85 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.12),rgba(255,255,255,0.04)_42%,rgba(0,0,0,0.08))]" />
                   <div className="pointer-events-none absolute inset-0 rounded-[14px] ring-1 ring-inset ring-white/18 dark:ring-white/10" />
-                  {focusSegment ? (
+                  {focusSegments.map((focusSegment) => (
                     <div
+                      key={focusSegment.id}
                       className="pointer-events-none absolute inset-y-[2px] z-[1] rounded-[10px] border border-white/70 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.32)_0_4px,rgba(255,255,255,0.08)_4px_8px)] shadow-[0_0_14px_rgba(255,255,255,0.22)] dark:border-sky-200/45 dark:bg-[repeating-linear-gradient(135deg,rgba(125,211,252,0.28)_0_4px,rgba(125,211,252,0.08)_4px_8px)] dark:shadow-[0_0_16px_rgba(56,189,248,0.24)]"
                       style={{
                         left: focusSegment.startOffsetDays * dayWidth + 2,
@@ -636,7 +661,7 @@ export function UserRowLine({
                       }}
                       aria-label="Focus period"
                     />
-                  ) : null}
+                  ))}
                   <div
                     onMouseDown={(event) => {
                       if (event.button !== 0) {
@@ -865,11 +890,14 @@ export function UserRowLine({
                 Leave: {hoveredTooltip.leaveLabel}
               </div>
             ) : null}
-            {hoveredTooltip.focusRange ? (
-              <div className="mt-1 text-xs font-medium text-sky-700 dark:text-sky-300">
-                Focus: {hoveredTooltip.focusRange}
+            {hoveredTooltip.focusRanges.map((focusRange, index) => (
+              <div
+                key={`${hoveredTooltip.assignmentId}-focus-${index}`}
+                className="mt-1 text-xs font-medium text-sky-700 dark:text-sky-300"
+              >
+                Focus{hoveredTooltip.focusRanges.length > 1 ? ` ${index + 1}` : ""}: {focusRange}
               </div>
-            ) : null}
+            ))}
           </div>
         ) : null}
 

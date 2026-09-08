@@ -87,6 +87,15 @@ export type ProjectPerson = {
   displayName: string;
 };
 
+export type AssignmentFocusPeriod = {
+  id: string;
+  assignmentId: string;
+  startDate: string;
+  endDate: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
 export type AssignmentRow = {
   id: string;
   userId: string;
@@ -96,6 +105,7 @@ export type AssignmentRow = {
   laneIndex?: number | null;
   focusStart?: string | null;
   focusEnd?: string | null;
+  focusPeriods?: AssignmentFocusPeriod[];
   createdAt?: string;
   updatedAt?: string;
 };
@@ -346,8 +356,6 @@ export async function updateAssignment(
     lengthDays?: number;
     userId?: string;
     laneIndex?: number | null;
-    focusStart?: string | null;
-    focusEnd?: string | null;
   },
 ): Promise<AssignmentRow> {
   return apiRequest<AssignmentRow>(`/assignments/${id}`, {
@@ -358,6 +366,40 @@ export async function updateAssignment(
 
 export async function deleteAssignment(id: string): Promise<void> {
   await apiRequest<void>(`/assignments/${id}`, { method: "DELETE" });
+}
+
+export async function createAssignmentFocusPeriod(
+  assignmentId: string,
+  payload: { startDate: string; endDate: string },
+): Promise<AssignmentRow> {
+  return apiRequest<AssignmentRow>(`/assignments/${assignmentId}/focus-periods`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAssignmentFocusPeriod(
+  assignmentId: string,
+  focusPeriodId: string,
+  payload: { startDate?: string; endDate?: string },
+): Promise<AssignmentRow> {
+  return apiRequest<AssignmentRow>(
+    `/assignments/${assignmentId}/focus-periods/${focusPeriodId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteAssignmentFocusPeriod(
+  assignmentId: string,
+  focusPeriodId: string,
+): Promise<AssignmentRow> {
+  return apiRequest<AssignmentRow>(
+    `/assignments/${assignmentId}/focus-periods/${focusPeriodId}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function getProjectComments(

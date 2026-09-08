@@ -80,10 +80,10 @@ const MAX_MANUAL_ROW_HEIGHT = 900;
 const DUPLICATE_PREVIEW_ASSIGNMENT_ID = "__duplicate__assignment";
 const DEFAULT_NEW_PROJECT_COLOR_KEY = "haematology";
 
-const STUDIO_TEAM: TeamGroup[] = [
+const CREATIVE_TEAM: TeamGroup[] = [
   {
     id: "studio",
-    name: "Studio",
+    name: "Creative Team",
     members: [
       { id: "milion", name: "Milion" },
       { id: "domino", name: "Domino" },
@@ -130,6 +130,7 @@ type InteractionState =
   | {
       mode: "create";
       userId: string;
+      laneIndex: number;
       anchorIndex: number;
       originClientX: number;
       anchorRect: DOMRect;
@@ -1152,7 +1153,6 @@ export function DashboardPage({
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(
     null,
   );
-  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [drawerProjectId, setDrawerProjectId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -1664,7 +1664,7 @@ export function DashboardPage({
   const filteredTeams = useMemo(() => {
     const trimmed = deferredQuery.trim().toLowerCase();
 
-    return STUDIO_TEAM.filter((team) => {
+    return CREATIVE_TEAM.filter((team) => {
       if (!trimmed) {
         return true;
       }
@@ -1741,23 +1741,17 @@ export function DashboardPage({
     return Array.from(recentById.values());
   }, [assignments, projects]);
 
-  const selectedTeam = useMemo(
-    () => STUDIO_TEAM.find((team) => team.id === selectedTeamId) ?? null,
-    [selectedTeamId],
-  );
-
   const filteredUsers = useMemo(() => {
     const trimmed = deferredQuery.trim().toLowerCase();
 
     return users.filter((user) => {
-      const teamMatches = !selectedTeamId || selectedTeamId === "studio";
       const queryMatches = !trimmed
         ? true
         : user.displayName.toLowerCase().includes(trimmed);
 
-      return teamMatches && queryMatches;
+      return queryMatches;
     });
-  }, [deferredQuery, selectedTeamId, users]);
+  }, [deferredQuery, users]);
 
   const todayIndex = useMemo(() => {
     const today = new Date();
@@ -1987,13 +1981,13 @@ export function DashboardPage({
   }, [assignmentPreview, duplicatePreviewAssignment, interaction]);
 
   const lockedAssignmentId =
-    interaction?.mode === "create"
-      ? DRAFT_ASSIGNMENT_ID
-      : interaction?.mode === "move" && interaction.duplicate
+    interaction?.mode === "move" && interaction.duplicate
         ? DUPLICATE_PREVIEW_ASSIGNMENT_ID
         : assignmentPreview?.assignmentId ?? null;
   const freezePreferredLanes =
-    interaction?.mode === "move" || interaction?.mode === "resize";
+    interaction?.mode === "create" ||
+    interaction?.mode === "move" ||
+    interaction?.mode === "resize";
 
   const rowMetrics = useMemo(() => {
     let top = 0;
@@ -2224,6 +2218,29 @@ export function DashboardPage({
     }
   }
 
+  function getNextNewAssignmentLaneIndex(userId: string) {
+    const userAssignments = assignments.filter(
+      (assignment) => assignment.userId === userId,
+    );
+
+    if (userAssignments.length === 0) {
+      return 0;
+    }
+
+    const stableLaneMap = committedStableLaneMapByUser[userId] ?? {};
+    const visibleLaneCount =
+      rowMetrics.find((row) => row.user.id === userId)?.layout.laneCount ?? 0;
+    const highestAssignedLane = userAssignments.reduce((highest, assignment) => {
+      const resolvedLane =
+        typeof assignment.laneIndex === "number"
+          ? assignment.laneIndex
+          : stableLaneMap[assignment.id] ?? -1;
+      return Math.max(highest, resolvedLane);
+    }, -1);
+
+    return Math.max(highestAssignedLane, visibleLaneCount - 1) + 1;
+  }
+
   const drawerAssignments = useMemo(() => {
     if (!drawerProjectId) {
       return [];
@@ -2251,6 +2268,11 @@ export function DashboardPage({
       projectId,
       activeDraft.startDate,
       lengthDays,
+      {
+        laneIndex:
+          activeDraft.laneIndex ??
+          getNextNewAssignmentLaneIndex(activeDraft.userId),
+      },
     );
 
     setAssignments((previous) => [created, ...previous]);
@@ -2262,6 +2284,7 @@ export function DashboardPage({
     userId: string,
     projectId: string,
     anchorIndex: number,
+    laneIndex: number,
   ) {
     const anchorDate = days[anchorIndex];
     const range = getWorkingRangeFromDrag(anchorDate, anchorDate, holidayMap);
@@ -2272,6 +2295,7 @@ export function DashboardPage({
       projectId,
       startDate: range.snappedStart.toISOString(),
       endDate: range.endExclusive.toISOString(),
+      laneIndex,
       isDraft: true,
     });
   }
@@ -2281,6 +2305,7 @@ export function DashboardPage({
     projectId: string,
     anchorIndex: number,
     targetIndex: number,
+    laneIndex: number,
   ) {
     const safeIndex = clamp(targetIndex, 0, days.length - 1);
     const range = getWorkingRangeFromDrag(
@@ -2295,6 +2320,7 @@ export function DashboardPage({
       projectId,
       startDate: range.snappedStart.toISOString(),
       endDate: range.endExclusive.toISOString(),
+      laneIndex,
       isDraft: true,
     });
   }
@@ -2306,14 +2332,16 @@ export function DashboardPage({
   ) {
     const projectId = placementProjectId ?? DRAFT_PROJECT_ID;
     const anchorRect = anchorEl.getBoundingClientRect();
+    const laneIndex = getNextNewAssignmentLaneIndex(userId);
 
-    beginDraftAssignment(userId, projectId, dayIndex);
+    beginDraftAssignment(userId, projectId, dayIndex, laneIndex);
     setSelectedAssignmentId(null);
     setPendingComposer(null);
     setAssignmentPreviewState(null);
     setInteraction({
       mode: "create",
       userId,
+      laneIndex,
       anchorIndex: dayIndex,
       originClientX: anchorRect.left + dayWidth / 2,
       anchorRect,
@@ -2453,10 +2481,7 @@ export function DashboardPage({
           holidayMap,
         ),
         {
-          laneIndex:
-            typeof sourceAssignment.laneIndex === "number"
-              ? sourceAssignment.laneIndex + 1
-              : undefined,
+          laneIndex: getNextNewAssignmentLaneIndex(sourceAssignment.userId),
         },
       );
 
@@ -2485,6 +2510,7 @@ export function DashboardPage({
       selectedProjectId,
       `${startDate}T00:00:00.000Z`,
       lengthDays,
+      { laneIndex: getNextNewAssignmentLaneIndex(userId) },
     );
 
     setAssignments((previous) => [created, ...previous]);
@@ -2561,14 +2587,10 @@ export function DashboardPage({
     setActivityRefreshKey((value) => value + 1);
   }
 
-  async function handleUpdateAssignmentFocus(
-    assignmentId: string,
-    patch: { focusStart?: string | null; focusEnd?: string | null },
-  ) {
-    const updated = await updateAssignment(assignmentId, patch);
+  function handleAssignmentFocusPeriodsUpdated(updated: AssignmentRow) {
     setAssignments((previous) =>
       previous.map((assignment) =>
-        assignment.id === assignmentId ? updated : assignment,
+        assignment.id === updated.id ? updated : assignment,
       ),
     );
   }
@@ -2675,6 +2697,7 @@ export function DashboardPage({
           activeInteraction.projectId,
           activeInteraction.anchorIndex,
           activeInteraction.anchorIndex + calendarDelta,
+          activeInteraction.laneIndex,
         );
         return;
       }
@@ -2757,6 +2780,10 @@ export function DashboardPage({
               activeInteraction.projectId,
               activeDraft.startDate,
               lengthDays,
+              {
+                laneIndex:
+                  activeDraft.laneIndex ?? activeInteraction.laneIndex,
+              },
             );
 
             setAssignments((previous) => [created, ...previous]);
@@ -2936,7 +2963,7 @@ export function DashboardPage({
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search Studio..."
+                  placeholder="Search Creative Team..."
                   className="w-full rounded-2xl bg-slate-50 px-3 py-2.5 text-sm ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300 dark:bg-zinc-900 dark:ring-zinc-800 dark:focus:ring-sky-800"
                 />
               </div>
@@ -2944,10 +2971,7 @@ export function DashboardPage({
               <div className="flex min-h-0 flex-1 flex-col rounded-[28px] border border-slate-200/80 bg-white/90 p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/95">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400 dark:text-zinc-500">
-                    Studio
-                  </div>
-                  <div className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800">
-                    {selectedTeam?.name ?? "Studio"}
+                    Creative Team
                   </div>
                 </div>
 
@@ -2955,12 +2979,10 @@ export function DashboardPage({
                   {filteredTeams.length > 0 ? (
                     <TeamsPanel
                       teams={filteredTeams}
-                      selectedTeamId={selectedTeamId}
-                      onSelectTeam={setSelectedTeamId}
                     />
                   ) : (
                     <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-500 dark:border-zinc-800 dark:text-zinc-400">
-                      No matching teams.
+                      No matching people.
                     </div>
                   )}
                 </div>
@@ -2971,7 +2993,7 @@ export function DashboardPage({
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-white/92 px-4 py-3 backdrop-blur-md dark:border-zinc-800/60 dark:bg-zinc-950">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="rounded-full bg-slate-100/90 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200/80 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800">
-                    {selectedTeam?.name ?? "Studio"}
+                    Creative Team
                   </div>
                   <div className="rounded-full bg-slate-100/90 px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200/80 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-800">
                     {filteredUsers.length} people
@@ -3299,7 +3321,7 @@ export function DashboardPage({
           selectedAssignmentId={selectedAssignmentId}
           onClose={() => setDrawerProjectId(null)}
           onSaveMetadata={handleSaveProjectMetadata}
-          onUpdateAssignment={handleUpdateAssignmentFocus}
+          onAssignmentUpdated={handleAssignmentFocusPeriodsUpdated}
         />
 
         {toast ? (

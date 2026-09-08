@@ -125,6 +125,7 @@ export type TimelineAssignmentLike = Pick<
   | "laneIndex"
   | "focusStart"
   | "focusEnd"
+  | "focusPeriods"
 > & {
   isDraft?: boolean;
 };
@@ -478,11 +479,7 @@ export function buildStableLaneMap<T extends TimelineAssignmentLike>(
     preferredLane: number | undefined,
     laneCount: number,
   ) {
-    if (
-      preferredLane !== undefined &&
-      preferredLane >= 0 &&
-      preferredLane <= laneCount
-    ) {
+    if (preferredLane !== undefined && preferredLane >= 0) {
       const order = [preferredLane];
 
       for (let laneIndex = preferredLane + 1; laneIndex < laneCount; laneIndex += 1) {
@@ -865,7 +862,7 @@ export function buildUserRowLayout<T extends TimelineAssignmentLike>(
     preferredLane: number | null,
     laneCount: number,
   ) {
-    if (preferredLane !== null && preferredLane >= 0 && preferredLane <= laneCount) {
+    if (preferredLane !== null && preferredLane >= 0) {
       const order = [preferredLane];
 
       for (let laneIndex = preferredLane + 1; laneIndex < laneCount; laneIndex += 1) {

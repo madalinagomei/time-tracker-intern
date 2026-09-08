@@ -167,26 +167,28 @@ function countWorkingDaysInclusiveFromDates(
   return Math.max(1, count);
 }
 
-function clampFocusRange(
-  focusStart: Date | null,
-  focusEnd: Date | null,
+function parseFocusPeriodDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function isFocusPeriodWithinAssignment(
+  startDate: Date,
+  endDate: Date,
   assignmentStart: Date,
   assignmentEnd: Date,
 ) {
-  if (!focusStart || !focusEnd) {
-    return { focusStart: null, focusEnd: null };
-  }
-
-  const start = new Date(
-    Math.max(focusStart.getTime(), assignmentStart.getTime()),
+  return (
+    startDate < endDate &&
+    startDate >= assignmentStart &&
+    endDate <= assignmentEnd
   );
-  const end = new Date(Math.min(focusEnd.getTime(), assignmentEnd.getTime()));
-
-  if (start >= end) {
-    return { focusStart: null, focusEnd: null };
-  }
-
-  return { focusStart: start, focusEnd: end };
 }
 
 function formatProjectStatusLabel(status: string | null | undefined) {
@@ -396,6 +398,9 @@ app.get("/projects", async (_req, res) => {
               displayName: true,
             },
           },
+          focusPeriods: {
+            orderBy: { startDate: "asc" },
+          },
         },
         orderBy: { startDate: "asc" },
       },
@@ -464,6 +469,9 @@ app.post("/projects", async (req, res) => {
               username: true,
               displayName: true,
             },
+          },
+          focusPeriods: {
+            orderBy: { startDate: "asc" },
           },
         },
         orderBy: { startDate: "asc" },
@@ -566,6 +574,9 @@ app.patch("/projects/:id", async (req, res) => {
               username: true,
               displayName: true,
             },
+          },
+          focusPeriods: {
+            orderBy: { startDate: "asc" },
           },
         },
         orderBy: { startDate: "asc" },
@@ -1006,6 +1017,11 @@ app.get("/assignments", async (req, res) => {
     const items = await prisma.assignment.findMany({
       where,
       orderBy: { startDate: "asc" },
+      include: {
+        focusPeriods: {
+          orderBy: { startDate: "asc" },
+        },
+      },
     });
 
     res.json(items);
@@ -1056,6 +1072,9 @@ app.post("/assignments", async (req, res) => {
             name: true,
           },
         },
+        focusPeriods: {
+          orderBy: { startDate: "asc" },
+        },
       },
     });
 
@@ -1088,6 +1107,166 @@ app.post("/assignments", async (req, res) => {
   }
 });
 
+app.post("/assignments/:id/focus-periods", async (req, res) => {
+  try {
+    const schema = z.object({
+      startDate: z.string().min(1),
+      endDate: z.string().min(1),
+    });
+    const parsed = schema.parse(req.body);
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!assignment) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    const startDate = parseFocusPeriodDate(parsed.startDate);
+    const endDate = parseFocusPeriodDate(parsed.endDate);
+
+    if (
+      !startDate ||
+      !endDate ||
+      !isFocusPeriodWithinAssignment(
+        startDate,
+        endDate,
+        assignment.startDate,
+        assignment.endDate,
+      )
+    ) {
+      return res.status(400).json({
+        error: "Focus period must stay inside the assignment date range.",
+      });
+    }
+
+    await prisma.assignmentFocusPeriod.create({
+      data: {
+        assignmentId: assignment.id,
+        startDate,
+        endDate,
+      },
+    });
+
+    const updated = await prisma.assignment.findUniqueOrThrow({
+      where: { id: assignment.id },
+      include: {
+        focusPeriods: {
+          orderBy: { startDate: "asc" },
+        },
+      },
+    });
+
+    res.status(201).json(updated);
+  } catch (err: any) {
+    console.error("POST /assignments/:id/focus-periods failed:", err);
+    res
+      .status(500)
+      .json({ error: err?.message ?? "Failed to create focus period" });
+  }
+});
+
+app.patch("/assignments/:assignmentId/focus-periods/:focusPeriodId", async (req, res) => {
+  try {
+    const schema = z.object({
+      startDate: z.string().min(1).optional(),
+      endDate: z.string().min(1).optional(),
+    });
+    const parsed = schema.parse(req.body);
+    const focusPeriod = await prisma.assignmentFocusPeriod.findFirst({
+      where: {
+        id: req.params.focusPeriodId,
+        assignmentId: req.params.assignmentId,
+      },
+      include: {
+        assignment: true,
+      },
+    });
+
+    if (!focusPeriod) {
+      return res.status(404).json({ error: "Focus period not found" });
+    }
+
+    const startDate = parsed.startDate
+      ? parseFocusPeriodDate(parsed.startDate)
+      : focusPeriod.startDate;
+    const endDate = parsed.endDate
+      ? parseFocusPeriodDate(parsed.endDate)
+      : focusPeriod.endDate;
+
+    if (
+      !startDate ||
+      !endDate ||
+      !isFocusPeriodWithinAssignment(
+        startDate,
+        endDate,
+        focusPeriod.assignment.startDate,
+        focusPeriod.assignment.endDate,
+      )
+    ) {
+      return res.status(400).json({
+        error: "Focus period must stay inside the assignment date range.",
+      });
+    }
+
+    await prisma.assignmentFocusPeriod.update({
+      where: { id: focusPeriod.id },
+      data: { startDate, endDate },
+    });
+
+    const updated = await prisma.assignment.findUniqueOrThrow({
+      where: { id: focusPeriod.assignmentId },
+      include: {
+        focusPeriods: {
+          orderBy: { startDate: "asc" },
+        },
+      },
+    });
+
+    res.json(updated);
+  } catch (err: any) {
+    console.error("PATCH /assignments/:assignmentId/focus-periods/:focusPeriodId failed:", err);
+    res
+      .status(500)
+      .json({ error: err?.message ?? "Failed to update focus period" });
+  }
+});
+
+app.delete("/assignments/:assignmentId/focus-periods/:focusPeriodId", async (req, res) => {
+  try {
+    const focusPeriod = await prisma.assignmentFocusPeriod.findFirst({
+      where: {
+        id: req.params.focusPeriodId,
+        assignmentId: req.params.assignmentId,
+      },
+    });
+
+    if (!focusPeriod) {
+      return res.status(404).json({ error: "Focus period not found" });
+    }
+
+    await prisma.assignmentFocusPeriod.delete({
+      where: { id: focusPeriod.id },
+    });
+
+    const updated = await prisma.assignment.findUniqueOrThrow({
+      where: { id: focusPeriod.assignmentId },
+      include: {
+        focusPeriods: {
+          orderBy: { startDate: "asc" },
+        },
+      },
+    });
+
+    res.json(updated);
+  } catch (err: any) {
+    console.error("DELETE /assignments/:assignmentId/focus-periods/:focusPeriodId failed:", err);
+    res
+      .status(500)
+      .json({ error: err?.message ?? "Failed to delete focus period" });
+  }
+});
+
 app.patch("/assignments/:id", async (req, res) => {
   try {
     const schema = z.object({
@@ -1095,12 +1274,9 @@ app.patch("/assignments/:id", async (req, res) => {
       lengthDays: z.number().int().min(1).optional(),
       userId: z.string().min(1).optional(),
       laneIndex: z.number().int().min(0).nullable().optional(),
-      focusStart: z.string().nullable().optional(),
-      focusEnd: z.string().nullable().optional(),
     });
 
-    const { userId, startDate, lengthDays, laneIndex, focusStart, focusEnd } =
-      schema.parse(req.body);
+    const { userId, startDate, lengthDays, laneIndex } = schema.parse(req.body);
 
     const existing = await prisma.assignment.findUnique({
       where: { id: req.params.id },
@@ -1110,6 +1286,9 @@ app.patch("/assignments/:id", async (req, res) => {
             id: true,
             displayName: true,
           },
+        },
+        focusPeriods: {
+          orderBy: { startDate: "asc" },
         },
       },
     });
@@ -1131,54 +1310,50 @@ app.patch("/assignments/:id", async (req, res) => {
 
     const nextLength = lengthDays ?? currentLength;
     const end = addWorkingDaysInclusive(start, nextLength, "DE-SH");
-    const hasFocusPatch = focusStart !== undefined || focusEnd !== undefined;
     const movedWholeAssignment =
       startDate !== undefined && nextLength === currentLength;
     const moveDeltaMs = start.getTime() - existing.startDate.getTime();
-    const shiftFocusDate = (value: Date | null) =>
+    const shiftLegacyFocusDate = (value: Date | null) =>
       value && movedWholeAssignment
         ? new Date(value.getTime() + moveDeltaMs)
         : value;
-    const requestedFocusStart =
-      focusStart === undefined
-        ? shiftFocusDate(existing.focusStart)
-        : focusStart
-          ? new Date(focusStart)
-          : null;
-    const requestedFocusEnd =
-      focusEnd === undefined
-        ? shiftFocusDate(existing.focusEnd)
-        : focusEnd
-          ? new Date(focusEnd)
-          : null;
-    const nextFocus = clampFocusRange(
-      requestedFocusStart,
-      requestedFocusEnd,
-      start,
-      end,
-    );
 
-    if (
-      hasFocusPatch &&
-      requestedFocusStart &&
-      requestedFocusEnd &&
-      !nextFocus.focusStart
-    ) {
-      return res.status(400).json({
-        error: "Focus period must stay inside the assignment date range.",
+    const item = await prisma.$transaction(async (transaction) => {
+      await transaction.assignment.update({
+        where: { id: req.params.id },
+        data: {
+          startDate: start,
+          endDate: end,
+          ...(userId !== undefined ? { userId } : {}),
+          ...(laneIndex !== undefined ? { laneIndex } : {}),
+          // Retain the legacy values for rollback/fallback compatibility only.
+          focusStart: shiftLegacyFocusDate(existing.focusStart),
+          focusEnd: shiftLegacyFocusDate(existing.focusEnd),
+        },
       });
-    }
 
-    const item = await prisma.assignment.update({
-      where: { id: req.params.id },
-      data: {
-        startDate: start,
-        endDate: end,
-        ...(userId !== undefined ? { userId } : {}),
-        ...(laneIndex !== undefined ? { laneIndex } : {}),
-        focusStart: nextFocus.focusStart,
-        focusEnd: nextFocus.focusEnd,
-      },
+      if (movedWholeAssignment && moveDeltaMs !== 0) {
+        await Promise.all(
+          existing.focusPeriods.map((period) =>
+            transaction.assignmentFocusPeriod.update({
+              where: { id: period.id },
+              data: {
+                startDate: new Date(period.startDate.getTime() + moveDeltaMs),
+                endDate: new Date(period.endDate.getTime() + moveDeltaMs),
+              },
+            }),
+          ),
+        );
+      }
+
+      return transaction.assignment.findUniqueOrThrow({
+        where: { id: req.params.id },
+        include: {
+          focusPeriods: {
+            orderBy: { startDate: "asc" },
+          },
+        },
+      });
     });
 
     const authorId = await getSystemAuthorIdForProject(existing.projectId);

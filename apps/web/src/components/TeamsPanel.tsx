@@ -1,3 +1,5 @@
+import { getAvatarTone } from "../planning";
+
 export type TeamMember = {
   id: string;
   name: string;
@@ -12,52 +14,36 @@ export type TeamGroup = {
 
 export function TeamsPanel({
   teams,
-  selectedTeamId,
-  onSelectTeam,
 }: {
   teams: TeamGroup[];
-  selectedTeamId: string | null;
-  onSelectTeam: (teamId: string | null) => void;
 }) {
   return (
-    <div className="space-y-2">
-      {teams.map((team) => {
-        const selected = selectedTeamId === team.id;
-
-        return (
-          <button
-            key={team.id}
-            type="button"
-            onClick={() => onSelectTeam(selected ? null : team.id)}
-            className={[
-              "flex w-full items-center justify-between rounded-3xl border px-3 py-3 text-left transition",
-              selected
-                ? "border-sky-200 bg-sky-50/80 shadow-sm dark:border-sky-900/50 dark:bg-sky-950/20"
-                : "border-slate-200/80 bg-white/90 hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
-            ].join(" ")}
+    <div className="space-y-1.5">
+      {teams.flatMap((team) =>
+        team.members.map((member) => (
+          <div
+            key={`${team.id}-${member.id}`}
+            className="flex items-center gap-2.5 rounded-2xl px-2.5 py-2"
           >
-            <div>
-              <div className="text-sm font-semibold text-slate-900 dark:text-zinc-100">
-                {team.name}
-              </div>
-              <div className="mt-0.5 text-[11px] text-slate-500 dark:text-zinc-400">
-                Shared timeline
-              </div>
-            </div>
-
             <div
               className={[
-                "rounded-full px-2.5 py-1 text-[10px] font-medium ring-1",
-                selected
-                  ? "bg-sky-100 text-sky-700 ring-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-900/50"
-                  : "bg-slate-100 text-slate-500 ring-slate-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800",
+                "flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-[9px] font-semibold ring-1 shadow-sm dark:ring-white/10",
+                getAvatarTone(member.id),
               ].join(" ")}
             >
-              {selected ? "Active" : "Show"}
+              {member.name
+                .split(" ")
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((part) => part[0]?.toUpperCase() ?? "")
+                .join("")}
             </div>
-          </button>
-        );
-      })}
+            <div className="min-w-0 truncate text-sm font-medium text-slate-700 dark:text-zinc-200">
+              {member.name}
+            </div>
+          </div>
+        )),
+      )}
     </div>
   );
 }
