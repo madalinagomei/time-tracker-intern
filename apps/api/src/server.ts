@@ -71,7 +71,11 @@ function studioProjectScope() {
   };
 }
 
-function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+function requireAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+) {
   const bearerToken = req.header("authorization")?.replace(/^Bearer\s+/i, "");
   const token = bearerToken || req.cookies?.[cookieName];
 
@@ -173,7 +177,9 @@ function clampFocusRange(
     return { focusStart: null, focusEnd: null };
   }
 
-  const start = new Date(Math.max(focusStart.getTime(), assignmentStart.getTime()));
+  const start = new Date(
+    Math.max(focusStart.getTime(), assignmentStart.getTime()),
+  );
   const end = new Date(Math.min(focusEnd.getTime(), assignmentEnd.getTime()));
 
   if (start >= end) {
@@ -883,7 +889,9 @@ app.patch("/comments/:id", async (req, res) => {
     }
 
     if (existing.authorId !== (req as AuthenticatedRequest).authUser!.id) {
-      return res.status(403).json({ error: "You can only edit your own updates" });
+      return res
+        .status(403)
+        .json({ error: "You can only edit your own updates" });
     }
 
     const updated = await prisma.comment.update({
@@ -933,7 +941,9 @@ app.delete("/comments/:id", async (req, res) => {
     }
 
     if (existing.authorId !== (req as AuthenticatedRequest).authUser!.id) {
-      return res.status(403).json({ error: "You can only delete your own updates" });
+      return res
+        .status(403)
+        .json({ error: "You can only delete your own updates" });
     }
 
     await prisma.commentReaction.deleteMany({
@@ -1017,9 +1027,8 @@ app.post("/assignments", async (req, res) => {
       laneIndex: z.number().int().min(0).optional(),
     });
 
-    const { userId, projectId, startDate, lengthDays, laneIndex } = schema.parse(
-      req.body,
-    );
+    const { userId, projectId, startDate, lengthDays, laneIndex } =
+      schema.parse(req.body);
 
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
@@ -1253,6 +1262,8 @@ app.delete("/assignments/:id", async (req, res) => {
       .json({ error: err?.message ?? "Failed to delete assignment" });
   }
 });
-server.listen(4000, () => {
-  console.log("API running on http://localhost:4000");
+const port = Number(process.env.PORT ?? 4000);
+
+server.listen(port, "0.0.0.0", () => {
+  console.log(`API running on port ${port}`);
 });
