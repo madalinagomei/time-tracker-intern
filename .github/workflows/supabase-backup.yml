@@ -1,0 +1,38 @@
+
+name: Daily Supabase Backup
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Create database backup
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_BACKUP_URL }}
+        run: |
+          test -n "$DATABASE_URL"
+          pg_dump \
+            --dbname="$DATABASE_URL" \
+            --format=custom \
+            --no-owner \
+            --no-acl \
+            --file=timeline-backup.dump
+
+      - name: Upload backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: timeline-backup-${{ github.run_id }}
+          path: timeline-backup.dump
+          retention-days: 30
+          if-no-files-found: error
