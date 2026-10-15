@@ -17,7 +17,12 @@ import {
 import { PrismaPg } from "@prisma/adapter-pg";
 
 const connectionString = process.env.DATABASE_URL!;
-const adapter = new PrismaPg({ connectionString });
+const adapter = new PrismaPg({
+  connectionString,
+  ssl: {
+    rejectUnauthorized: true,
+  },
+});
 const prisma = new PrismaClient({ adapter });
 
 const app = express();
@@ -1166,106 +1171,118 @@ app.post("/assignments/:id/focus-periods", async (req, res) => {
   }
 });
 
-app.patch("/assignments/:assignmentId/focus-periods/:focusPeriodId", async (req, res) => {
-  try {
-    const schema = z.object({
-      startDate: z.string().min(1).optional(),
-      endDate: z.string().min(1).optional(),
-    });
-    const parsed = schema.parse(req.body);
-    const focusPeriod = await prisma.assignmentFocusPeriod.findFirst({
-      where: {
-        id: req.params.focusPeriodId,
-        assignmentId: req.params.assignmentId,
-      },
-      include: {
-        assignment: true,
-      },
-    });
-
-    if (!focusPeriod) {
-      return res.status(404).json({ error: "Focus period not found" });
-    }
-
-    const startDate = parsed.startDate
-      ? parseFocusPeriodDate(parsed.startDate)
-      : focusPeriod.startDate;
-    const endDate = parsed.endDate
-      ? parseFocusPeriodDate(parsed.endDate)
-      : focusPeriod.endDate;
-
-    if (
-      !startDate ||
-      !endDate ||
-      !isFocusPeriodWithinAssignment(
-        startDate,
-        endDate,
-        focusPeriod.assignment.startDate,
-        focusPeriod.assignment.endDate,
-      )
-    ) {
-      return res.status(400).json({
-        error: "Focus period must stay inside the assignment date range.",
+app.patch(
+  "/assignments/:assignmentId/focus-periods/:focusPeriodId",
+  async (req, res) => {
+    try {
+      const schema = z.object({
+        startDate: z.string().min(1).optional(),
+        endDate: z.string().min(1).optional(),
       });
-    }
-
-    await prisma.assignmentFocusPeriod.update({
-      where: { id: focusPeriod.id },
-      data: { startDate, endDate },
-    });
-
-    const updated = await prisma.assignment.findUniqueOrThrow({
-      where: { id: focusPeriod.assignmentId },
-      include: {
-        focusPeriods: {
-          orderBy: { startDate: "asc" },
+      const parsed = schema.parse(req.body);
+      const focusPeriod = await prisma.assignmentFocusPeriod.findFirst({
+        where: {
+          id: req.params.focusPeriodId,
+          assignmentId: req.params.assignmentId,
         },
-      },
-    });
-
-    res.json(updated);
-  } catch (err: any) {
-    console.error("PATCH /assignments/:assignmentId/focus-periods/:focusPeriodId failed:", err);
-    res
-      .status(500)
-      .json({ error: err?.message ?? "Failed to update focus period" });
-  }
-});
-
-app.delete("/assignments/:assignmentId/focus-periods/:focusPeriodId", async (req, res) => {
-  try {
-    const focusPeriod = await prisma.assignmentFocusPeriod.findFirst({
-      where: {
-        id: req.params.focusPeriodId,
-        assignmentId: req.params.assignmentId,
-      },
-    });
-
-    if (!focusPeriod) {
-      return res.status(404).json({ error: "Focus period not found" });
-    }
-
-    await prisma.assignmentFocusPeriod.delete({
-      where: { id: focusPeriod.id },
-    });
-
-    const updated = await prisma.assignment.findUniqueOrThrow({
-      where: { id: focusPeriod.assignmentId },
-      include: {
-        focusPeriods: {
-          orderBy: { startDate: "asc" },
+        include: {
+          assignment: true,
         },
-      },
-    });
+      });
 
-    res.json(updated);
-  } catch (err: any) {
-    console.error("DELETE /assignments/:assignmentId/focus-periods/:focusPeriodId failed:", err);
-    res
-      .status(500)
-      .json({ error: err?.message ?? "Failed to delete focus period" });
-  }
-});
+      if (!focusPeriod) {
+        return res.status(404).json({ error: "Focus period not found" });
+      }
+
+      const startDate = parsed.startDate
+        ? parseFocusPeriodDate(parsed.startDate)
+        : focusPeriod.startDate;
+      const endDate = parsed.endDate
+        ? parseFocusPeriodDate(parsed.endDate)
+        : focusPeriod.endDate;
+
+      if (
+        !startDate ||
+        !endDate ||
+        !isFocusPeriodWithinAssignment(
+          startDate,
+          endDate,
+          focusPeriod.assignment.startDate,
+          focusPeriod.assignment.endDate,
+        )
+      ) {
+        return res.status(400).json({
+          error: "Focus period must stay inside the assignment date range.",
+        });
+      }
+
+      await prisma.assignmentFocusPeriod.update({
+        where: { id: focusPeriod.id },
+        data: { startDate, endDate },
+      });
+
+      const updated = await prisma.assignment.findUniqueOrThrow({
+        where: { id: focusPeriod.assignmentId },
+        include: {
+          focusPeriods: {
+            orderBy: { startDate: "asc" },
+          },
+        },
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      console.error(
+        "PATCH /assignments/:assignmentId/focus-periods/:focusPeriodId failed:",
+        err,
+      );
+      res
+        .status(500)
+        .json({ error: err?.message ?? "Failed to update focus period" });
+    }
+  },
+);
+
+app.delete(
+  "/assignments/:assignmentId/focus-periods/:focusPeriodId",
+  async (req, res) => {
+    try {
+      const focusPeriod = await prisma.assignmentFocusPeriod.findFirst({
+        where: {
+          id: req.params.focusPeriodId,
+          assignmentId: req.params.assignmentId,
+        },
+      });
+
+      if (!focusPeriod) {
+        return res.status(404).json({ error: "Focus period not found" });
+      }
+
+      await prisma.assignmentFocusPeriod.delete({
+        where: { id: focusPeriod.id },
+      });
+
+      const updated = await prisma.assignment.findUniqueOrThrow({
+        where: { id: focusPeriod.assignmentId },
+        include: {
+          focusPeriods: {
+            orderBy: { startDate: "asc" },
+          },
+        },
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      console.error(
+        "DELETE /assignments/:assignmentId/focus-periods/:focusPeriodId failed:",
+        err,
+      );
+      res
+        .status(500)
+        .json({ error: err?.message ?? "Failed to delete focus period" });
+    }
+  },
+);
 
 app.patch("/assignments/:id", async (req, res) => {
   try {
