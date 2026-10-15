@@ -12,11 +12,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
-            - name: Install PostgreSQL 17 client
-        run: |
-          docker pull postgres:17
+      - name: Prepare PostgreSQL 17
+        run: docker pull postgres:17
 
-            - name: Create database backup
+      - name: Create database backup
         env:
           DATABASE_URL: ${{ secrets.SUPABASE_BACKUP_URL }}
         run: |
@@ -25,12 +24,7 @@ jobs:
             -e DATABASE_URL \
             -v "$PWD:/backup" \
             postgres:17 \
-            pg_dump \
-              --dbname="$DATABASE_URL" \
-              --format=custom \
-              --no-owner \
-              --no-acl \
-              --file=/backup/timeline-backup.dump
+            sh -c 'pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-acl --file=/backup/timeline-backup.dump'
 
       - name: Upload backup
         uses: actions/upload-artifact@v4
