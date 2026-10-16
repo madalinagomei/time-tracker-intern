@@ -17,12 +17,20 @@ import {
 import { PrismaPg } from "@prisma/adapter-pg";
 
 const connectionString = process.env.DATABASE_URL!;
+const databaseUrl = new URL(connectionString);
+databaseUrl.searchParams.delete("sslmode");
+
 const adapter = new PrismaPg({
-  connectionString,
+  connectionString: databaseUrl.toString(),
   ssl: {
+    ca: require("node:fs").readFileSync(
+      process.env.NODE_EXTRA_CA_CERTS || "certs/prod-ca-2021.crt",
+      "utf8",
+    ),
     rejectUnauthorized: true,
   },
 });
+
 const prisma = new PrismaClient({ adapter });
 
 const app = express();
